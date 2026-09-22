@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+motor
+pydantic
+pydantic-settings
+python-dotenv
+requests
+pytest
+pytest-asyncio
+pytest-mock
+httpx
+email-validator
+
+# Machine Learning Dependencies
+torch
+numpy
+mlflow

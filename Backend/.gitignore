@@ -1,0 +1,21 @@
+# Environments
+.venv/
+env/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment Variables (CRITICAL)
+.env
+
+# Machine Learning Artifacts
+mlruns/
+mlflow.db
+*.pth
+*.pt
+
+# OS generated files
+.DS_Store
