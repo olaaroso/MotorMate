@@ -6,6 +6,7 @@ from app.core.database import db_instance
 
 router = APIRouter(prefix="/api/vin", tags=["VIN Lookup"])
 
+# TODO: Ensure that the VIN decoding service is robust and can handle edge cases, such as invalid VINs or network failures when calling the external API. Implement retries and error handling to improve reliability.
 # Create a strict schema for the incoming JSON
 class VinRegistrationRequest(BaseModel):
     vin: str

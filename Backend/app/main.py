@@ -21,3 +21,9 @@ app.include_router(routes_mechanic.router)
 @app.get("/")
 async def root():
     return {"status": "success", "message": "Backend is running and connected."}
+
+# TODO: Add a health check endpoint that verifies the connection to the MongoDB database and returns the status of the application.
+# TODO: Implement logging for all API requests and responses to facilitate debugging and monitoring of the application.
+# TODO: Build the bridge between the ML model and the API to allow for real-time predictions based on user input.
+# TODO: Build the bridge between the frontend and the API to allow for seamless user interactions and data flow between the two components.
+# TODO: Implement authentication and authorization mechanisms to secure the API endpoints and protect sensitive user data.

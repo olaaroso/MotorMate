@@ -1,11 +1,14 @@
 import pytest
+import pytest_asyncio
+import os
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core.database import db_instance, connect_to_mongo, close_mongo_connection
 
-TEST_DATABASE_NAME = "test_capstone_e2e_db"
+# TODO: Use the Main Test Database for E2E Tests. This will ensure that we are not polluting the production database with test data.
+TEST_DATABASE_NAME = os.getenv("MONGOODB_URL", "test_db")
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def setup_and_teardown_db():
     # Setup test database
     await connect_to_mongo()
@@ -34,6 +37,8 @@ async def test_full_user_journey_live_api():
         # ==========================================
         # STEP 1: Register a Mechanic in Farmingdale
         # ==========================================
+        # TODO: Create a Customer fixture to generate random mechanic data for testing purposes.
+        # TODO: Create a User who can rent/sell car parts and test the entire flow of the application.
         mechanic_payload = {
             "name": "Jane Doe",
             "email": "jane@capstoneauto.com",
@@ -49,6 +54,9 @@ async def test_full_user_journey_live_api():
         # ==========================================
         # STEP 2: Decode VIN & Save to Database
         # ==========================================
+        # TODO: In the future, we can expand this to test multiple VINs and validate the vehicle details against expected outcomes.
+        # TODO: Ensure the List displayed is sorted by year, make, and model in ascending order
+        # TODO: Ensure that all vehicle details are correctly parsed and stored in the database
         vin_payload = {
             "vin": "1G1RC6E42CU111111",  # Mathematically valid Chevy Volt VIN
             "owner_id": "student_999"
@@ -67,6 +75,9 @@ async def test_full_user_journey_live_api():
         # ==========================================
         # STEP 3: PyTorch ML Inference
         # ==========================================
+        # TODO: Ensure the ML model is loaded and ready to predict before running this test. If not, the test will fail.
+        # TODO: In the future, we can expand this to test multiple mileage scenarios and validate the predictions against expected outcomes.
+        # TODO: Ensure the List displayed is sorted by probability in descending order
         pred_payload = {
             "vin": "1G1RC6E42CU111111",
             "mileage": 145000  
@@ -85,6 +96,8 @@ async def test_full_user_journey_live_api():
         # STEP 4: Mechanic Matching Algorithm
         # ==========================================
         # Take the top predicted broken part and search the database for it
+        # TODO: In the future, we can expand this to search for multiple parts and return a ranked list of mechanics
+        # TODO: Ensure the List displayed is sorted
         if repairs and repairs[0]["part"] != "None expected soon":
             top_repair = repairs[0]["part"]
             
@@ -94,6 +107,7 @@ async def test_full_user_journey_live_api():
             assert search_res.status_code == 200
             
             search_data = search_res.json()
+
             print(f"\n[3] MECHANIC MATCH FOR '{top_repair.upper()}':")
             for shop in search_data["results"]:
                 print(f"    -> Shop: {shop['shop_name']} | Address: {shop['address']} | Est. Labor: ${shop['estimated_labor_cost']}")

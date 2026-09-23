@@ -1,3 +1,6 @@
+# TODO: Organize the requirements.txt file into sections based on functionality or purpose. This will make it easier to manage dependencies and understand their role in the project. For example, group dependencies related to web frameworks, database connectors, testing tools, and machine learning libraries separately.
+# TODO: Ensure that all dependencies can be merged into a single requirements.txt file without conflicts. This may involve checking for version compatibility and resolving any issues that arise from conflicting dependencies.
+
 fastapi
 uvicorn[standard]
 motor

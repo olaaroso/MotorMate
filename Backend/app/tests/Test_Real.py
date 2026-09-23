@@ -1,0 +1,3 @@
+# TODO: Build a Real Test, using the actual NHTSA API, to validate the entire flow of the application from registering a mechanic, registering a VIN, running ML inference, and searching for mechanics who can fix the predicted broken parts. This will ensure that all components of the application are working together as expected and provide a comprehensive end-to-end test for the system.
+# TODO: Use the Real database for the E2E Test. This will ensure that we are testing the application in a realistic environment and that the data being used is representative of real-world scenarios.
+# TODO: None

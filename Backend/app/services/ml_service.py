@@ -4,6 +4,8 @@ import torch
 import mlflow
 from mlflow.tracking import MlflowClient
 
+# TODO: Implement a caching mechanism to store the loaded model in memory for faster inference. This will reduce the overhead of loading the model from disk for each prediction request and improve the overall performance of the service.
+# TODO: Implement the ability to handle multiple models for different vehicle types or maintenance tasks. This will allow the service to provide more accurate predictions based on the specific characteristics of the vehicle being analyzed.
 # 1. Path Resolution: Dynamically find our directories
 current_dir = os.path.dirname(os.path.abspath(__file__))  # .../Backend/app/services
 app_dir = os.path.dirname(current_dir)                    # .../Backend/app

@@ -28,6 +28,7 @@ class MaintenancePredictor(nn.Module):
         return self.network(x)
 
 # 2. Synthetic Data Generator (Until you get real car data)
+# TODO: Replace this with real-world data once available. The synthetic data is just for initial model training and testing.
 def generate_synthetic_data(num_samples=5000):
     """
     Generates dummy vehicle data to train the initial model.
@@ -59,6 +60,10 @@ def generate_synthetic_data(num_samples=5000):
     return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
 # 3. Training Loop
+# TODO: Implement early stopping and model checkpointing to save the best model during training. This will help prevent overfitting and ensure that we have a reliable model for predictions.
+# TODO: Experiment with different architectures, activation functions, and optimizers to improve the model's performance. Consider using techniques like learning rate scheduling and data augmentation to enhance the training process.
+# TODO: Once real-world data is available, retrain the model and evaluate its performance using metrics like accuracy, precision, recall, and F1-score. This will help us understand how well the model generalizes to unseen data and identify areas for improvement.
+# TODO: Incease the number of epochs and batch size to see if the model's performance improves. Monitor the training and validation loss to ensure that the model is not overfitting or underfitting the data.
 def train_model():
     # Hyperparameters
     INPUT_DIM = 2 # Year, Mileage

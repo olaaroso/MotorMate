@@ -2,6 +2,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional
 from datetime import datetime, timezone
 
+# TODO: Implement a user authentication and authorization system to ensure that only authorized users can access certain endpoints. This will involve creating a secure login mechanism, managing user sessions, and enforcing role-based access control to protect sensitive data and functionality within the application.
 class UserBase(BaseModel):
     name: str
     email: EmailStr

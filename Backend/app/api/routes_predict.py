@@ -4,6 +4,7 @@ from app.services.vin_service import vin_decoder
 from app.services.ml_service import predict_maintenance
 
 router = APIRouter(prefix="/api/predict", tags=["Repair Predictions"])
+# TODO: Build an architecture that allows for real-time predictions based on user input. This will enable users to get immediate feedback on potential repairs and maintenance needs for their vehicles.
 
 class PredictionRequest(BaseModel):
     vin: str

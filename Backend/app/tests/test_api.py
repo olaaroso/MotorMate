@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core.database import db_instance, connect_to_mongo, close_mongo_connection
@@ -6,7 +7,7 @@ from app.services.vin_service import vin_decoder
 
 TEST_DATABASE_NAME = "test_car_repair_db"
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def setup_and_teardown_db():
     # Explicitly open the database connection since httpx does not trigger lifespan events
     await connect_to_mongo()

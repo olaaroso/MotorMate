@@ -1,0 +1,1 @@
+# TODO: Build a Customer who rents and sells car parts and test the entire flow of the application. This will ensure that the application is functioning as expected and that all components are working together seamlessly.

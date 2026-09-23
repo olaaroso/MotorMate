@@ -1,5 +1,8 @@
 import httpx
 
+# TODO: Implement a caching mechanism to store the loaded model in memory for faster inference. This will reduce the overhead of loading the model from disk for each prediction request and improve the overall performance of the service.
+# TODO: Implement the ability to handle multiple models for different vehicle types or maintenance tasks. This will allow the service to provide more accurate predictions based on the specific characteristics of the vehicle being analyzed.
+# TODO: Ensure the API sends all data related to the car the user inputed.
 class NHTSADecoder:
     def __init__(self):
         # DecodeVinValues returns a cleaner, flatter JSON structure
