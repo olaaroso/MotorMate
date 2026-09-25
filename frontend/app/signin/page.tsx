@@ -1,6 +1,43 @@
+"use client";
+
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 export default function SigninPage() {
+  const router = useRouter();
+
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSignin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    setError("");
+    setLoading(true);
+
+    const formData = new FormData(event.currentTarget);
+
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+
+    try {
+      // Log the user into Firebase
+      await signInWithEmailAndPassword(auth, email, password);
+
+      // Send them to the user homepage
+      router.push("/userDashboard");
+    } catch (error) {
+      console.error(error);
+      setError("Invalid email or password.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-white lg:grid lg:grid-cols-[46%_54%]">
 
@@ -45,7 +82,10 @@ export default function SigninPage() {
 
 
           {/* FORM */}
-          <form className="mx-auto mt-10 w-full max-w-[420px]">
+          <form
+            onSubmit={handleSignin}
+            className="mx-auto mt-10 w-full max-w-[420px]"
+          >
 
             {/* Email */}
             <div>
@@ -58,7 +98,9 @@ export default function SigninPage() {
 
               <input
                 id="email"
+                name="email"
                 type="email"
+                required
                 className="h-[52px] w-full rounded-lg bg-[#D9D9D9] px-4 text-black outline-none transition focus:ring-2 focus:ring-[#001F3F]"
               />
             </div>
@@ -75,18 +117,29 @@ export default function SigninPage() {
 
               <input
                 id="password"
+                name="password"
                 type="password"
+                required
                 className="h-[52px] w-full rounded-lg bg-[#D9D9D9] px-4 text-black outline-none transition focus:ring-2 focus:ring-[#001F3F]"
               />
             </div>
 
 
+            {/* Error Message */}
+            {error && (
+              <p className="mt-4 text-sm text-red-600">
+                {error}
+              </p>
+            )}
+
+
             {/* Login Button */}
             <button
               type="submit"
-              className="mt-8 h-[54px] w-full rounded-lg bg-[#002C5A] text-2xl text-white shadow-lg transition hover:bg-[#00386f]"
+              disabled={loading}
+              className="mt-8 h-[54px] w-full rounded-lg bg-[#002C5A] text-2xl text-white shadow-lg transition hover:bg-[#00386f] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Log In
+              {loading ? "Logging In..." : "Log In"}
             </button>
 
           </form>
