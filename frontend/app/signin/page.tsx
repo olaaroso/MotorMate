@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+
+import { auth, db } from "@/lib/firebase";
 
 export default function SigninPage() {
   const router = useRouter();
@@ -25,14 +27,55 @@ export default function SigninPage() {
     const password = formData.get("password") as string;
 
     try {
-      // Log the user into Firebase
-      await signInWithEmailAndPassword(auth, email, password);
+      console.log("1 - Trying Firebase login");
 
-      // Send them to the user homepage
-      router.push("/userDashboard");
-    } catch (error) {
-      console.error(error);
-      setError("Invalid email or password.");
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email,
+        password
+      );
+
+      console.log("2 - Login successful");
+
+      const user = userCredential.user;
+
+      console.log("3 - Looking up Firestore profile");
+
+      const userDoc = await getDoc(
+        doc(db, "users", user.uid)
+      );
+
+      console.log("4 - Firestore lookup complete");
+
+      if (!userDoc.exists()) {
+        setError("Your account exists, but your MotorMate profile was not found.");
+        return;
+      }
+
+      const userData = userDoc.data();
+
+      console.log("Account type:", userData.accountType);
+
+      if (userData.accountType === "business") {
+        router.push("/mechanic");
+      } else {
+        router.push("/userDashboard");
+      }
+
+    } catch (error: any) {
+      console.error("LOGIN ERROR:", error);
+
+      if (
+        error.code === "auth/invalid-credential" ||
+        error.code === "auth/wrong-password" ||
+        error.code === "auth/user-not-found"
+      ) {
+        setError("Invalid email or password.");
+      } else if (error.code === "permission-denied") {
+        setError("Logged in, but Firestore permission was denied.");
+      } else {
+        setError(`Login error: ${error.code || error.message}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -63,7 +106,6 @@ export default function SigninPage() {
         </div>
       </section>
 
-
       {/* RIGHT SIDE */}
       <section className="flex min-h-screen items-center justify-center bg-white px-8 py-12">
 
@@ -79,7 +121,6 @@ export default function SigninPage() {
           </p>
 
           <div className="mt-4 h-px w-full bg-gray-400" />
-
 
           {/* FORM */}
           <form
@@ -105,7 +146,6 @@ export default function SigninPage() {
               />
             </div>
 
-
             {/* Password */}
             <div className="mt-5">
               <label
@@ -124,14 +164,12 @@ export default function SigninPage() {
               />
             </div>
 
-
             {/* Error Message */}
             {error && (
               <p className="mt-4 text-sm text-red-600">
                 {error}
               </p>
             )}
-
 
             {/* Login Button */}
             <button
@@ -143,7 +181,6 @@ export default function SigninPage() {
             </button>
 
           </form>
-
 
           {/* OR */}
           <div className="mx-auto mt-10 flex w-full max-w-[420px] items-center gap-4">
@@ -157,7 +194,6 @@ export default function SigninPage() {
             <div className="h-px flex-1 bg-gray-400" />
 
           </div>
-
 
           {/* Signup Link */}
           <div className="mt-8 text-center text-sm text-black">
