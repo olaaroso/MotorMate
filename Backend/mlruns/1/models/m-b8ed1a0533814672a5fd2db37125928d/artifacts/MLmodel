@@ -1,0 +1,23 @@
+artifact_path: /workspaces/NextGen-Auto-Care/mlruns/1/models/m-b8ed1a0533814672a5fd2db37125928d/artifacts
+flavors:
+  python_function:
+    config:
+      device: null
+    data: data
+    env:
+      conda: conda.yaml
+      virtualenv: python_env.yaml
+    loader_module: mlflow.pytorch
+    pickle_module_name: mlflow.pytorch.pickle_module
+    python_version: 3.14.2
+  pytorch:
+    code: null
+    model_data: data
+    pytorch_version: 2.14.0+cu130
+mlflow_version: 3.16.1
+model_id: m-b8ed1a0533814672a5fd2db37125928d
+model_size_bytes: 16444
+model_uuid: m-b8ed1a0533814672a5fd2db37125928d
+prompts: null
+run_id: d93f065e5349432bbad099cd7843d2fa
+utc_time_created: '2026-09-22 18:20:32.956838'
