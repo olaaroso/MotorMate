@@ -17,7 +17,7 @@ export default function DashboardPage() {
 
       <section>
         <h1 className="text-3xl font-bold text-[#001F3F]">
-          Welcome back, John
+          Welcome back, Mate
         </h1>
 
         <p className="mt-1 text-gray-500">
