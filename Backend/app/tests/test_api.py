@@ -23,6 +23,64 @@ async def setup_and_teardown_db():
     await close_mongo_connection()
 
 @pytest.mark.asyncio
+async def test_health_endpoint_returns_service_status():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["service"] == "Vehicle Maintenance Predictor API"
+
+
+@pytest.mark.asyncio
+async def test_invalid_vin_fails_fast():
+    payload = {"vin": "INVALID", "owner_id": "owner-123"}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.post("/api/vin/register", json=payload)
+
+    assert response.status_code == 400
+    assert "17 characters" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_auth_login_returns_token_for_registered_user():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/auth/register",
+            json={
+                "name": "Auth Tester",
+                "email": "auth@example.com",
+                "password": "secretpass",
+                "role": "mechanic",
+            },
+        )
+        assert response.status_code == 200
+
+        login_response = await ac.post(
+            "/api/auth/login",
+            json={"email": "auth@example.com", "password": "secretpass"},
+        )
+
+    assert login_response.status_code == 200
+    assert "access_token" in login_response.json()
+    assert login_response.json()["token_type"] == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_mechanic_route_requires_authentication():
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        response = await ac.get("/api/mechanics/search?zip_code=11735&service_needed=Brake%20Pads")
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_register_and_lookup_vin_success(mocker):
     mock_vehicle_data = {
         "Make": "HONDA",

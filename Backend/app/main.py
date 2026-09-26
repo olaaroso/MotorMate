@@ -1,29 +1,53 @@
-from fastapi import FastAPI
+import logging
 from contextlib import asynccontextmanager
-from app.core.database import connect_to_mongo, close_mongo_connection
-from app.api import routes_vin, routes_predict, routes_mechanic
 
-# FIX: Use the lifespan context manager for startup and shutdown
+from fastapi import FastAPI, Request
+
+from app.api import routes_auth, routes_mechanic, routes_predict, routes_vin
+from app.core.database import close_mongo_connection, connect_to_mongo
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("vehicle_api")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup logic
     await connect_to_mongo()
+    logger.info("Application startup complete")
     yield
-    # Shutdown logic
     await close_mongo_connection()
+    logger.info("Application shutdown complete")
+
 
 app = FastAPI(title="Vehicle Maintenance Predictor", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info("Request %s %s", request.method, request.url.path)
+    response = await call_next(request)
+    logger.info("Response %s for %s", response.status_code, request.url.path)
+    return response
+
+
+app.include_router(routes_auth.router)
 app.include_router(routes_vin.router)
 app.include_router(routes_predict.router)
 app.include_router(routes_mechanic.router)
+
 
 @app.get("/")
 async def root():
     return {"status": "success", "message": "Backend is running and connected."}
 
-# TODO: Add a health check endpoint that verifies the connection to the MongoDB database and returns the status of the application.
-# TODO: Implement logging for all API requests and responses to facilitate debugging and monitoring of the application.
-# TODO: Build the bridge between the ML model and the API to allow for real-time predictions based on user input.
-# TODO: Build the bridge between the frontend and the API to allow for seamless user interactions and data flow between the two components.
-# TODO: Implement authentication and authorization mechanisms to secure the API endpoints and protect sensitive user data.
+
+@app.get("/health")
+async def health_check():
+    from app.core.database import db_instance
+
+    database_status = "connected" if db_instance.db is not None else "disconnected"
+    return {
+        "status": "ok",
+        "service": "Vehicle Maintenance Predictor API",
+        "database": database_status,
+    }

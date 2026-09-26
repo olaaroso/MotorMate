@@ -1,12 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query
 from typing import List
-from app.models.user import MechanicProfile
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.auth import require_role
 from app.core.database import db_instance
+from app.models.user import MechanicProfile
 
 router = APIRouter(prefix="/api/mechanics", tags=["Mechanic Matching"])
 
+
 @router.post("/register")
-async def register_mechanic(mechanic: MechanicProfile):
+async def register_mechanic(mechanic: MechanicProfile, _: dict = Depends(require_role("mechanic"))):
     """
     Registers a new mechanic profile in the database.
     """
@@ -26,7 +30,8 @@ async def register_mechanic(mechanic: MechanicProfile):
 @router.get("/search")
 async def search_mechanics(
     zip_code: str = Query(..., description="User's 5-digit zip code"),
-    service_needed: str = Query(..., description="The part or service predicted by the ML model")
+    service_needed: str = Query(..., description="The part or service predicted by the ML model"),
+    _: dict = Depends(require_role("mechanic", "consumer")),
 ):
     """
     Finds mechanics in a specific zip code offering the predicted repair service.

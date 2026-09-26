@@ -12,9 +12,17 @@ __pycache__/
 .env
 
 # Machine Learning Artifacts
-mlruns/
+mlruns/*
+!mlruns/1/
+mlruns/1/*
+!mlruns/1/models/
+mlruns/1/models/*
+!mlruns/1/models/m-b8ed1a0533814672a5fd2db37125928d/
+!mlruns/1/models/m-b8ed1a0533814672a5fd2db37125928d/**
 mlflow.db
+!mlflow-root.db
 *.pth
+!mlruns/1/models/m-b8ed1a0533814672a5fd2db37125928d/artifacts/data/model.pth
 *.pt
 
 # OS generated files
