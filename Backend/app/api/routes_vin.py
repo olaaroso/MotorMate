@@ -12,6 +12,16 @@ router = APIRouter(prefix="/api/vin", tags=["VIN Lookup"])
 class VinRegistrationRequest(BaseModel):
     vin: str
     owner_id: str
+    current_mileage: Optional[int] = 0
+
+
+class ManualVehicleRequest(BaseModel):
+    owner_id: str
+    make: str
+    model: str
+    year: int
+    current_mileage: Optional[int] = 0
+    vin: Optional[str] = None
 
 
 @router.post("/register")
@@ -41,7 +51,7 @@ async def register_and_lookup_vin(request: VinRegistrationRequest):
         "make": vehicle_data.get("Make"),
         "model": vehicle_data.get("Model"),
         "year": year,
-        "current_mileage": 0,
+        "current_mileage": request.current_mileage or 0,
     }
 
     try:
@@ -61,6 +71,41 @@ async def register_and_lookup_vin(request: VinRegistrationRequest):
 
         return {
             "message": "Vehicle successfully decoded and saved",
+            "vehicle_id": str(result.inserted_id),
+            "vehicle_details": new_vehicle,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Database insertion failed: {str(exc)}")
+
+
+@router.post("/manual")
+async def register_manual_vehicle(request: ManualVehicleRequest):
+    owner_id = request.owner_id.strip()
+    make = request.make.strip().title()
+    model = request.model.strip().title()
+
+    if not make or not model:
+        raise HTTPException(status_code=400, detail="Make and Model are required.")
+
+    if request.year < 1900 or request.year > 2100:
+        raise HTTPException(status_code=400, detail="Please enter a valid model year.")
+
+    new_vehicle = {
+        "owner_id": owner_id,
+        "vin": request.vin.upper().strip() if request.vin else None,
+        "make": make,
+        "model": model,
+        "year": request.year,
+        "current_mileage": request.current_mileage or 0,
+    }
+
+    try:
+        vehicles_collection = db_instance.db["vehicles"]
+        result = await vehicles_collection.insert_one(new_vehicle)
+        new_vehicle["_id"] = str(result.inserted_id)
+
+        return {
+            "message": "Vehicle successfully added manually",
             "vehicle_id": str(result.inserted_id),
             "vehicle_details": new_vehicle,
         }
