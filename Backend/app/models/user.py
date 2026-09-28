@@ -7,7 +7,7 @@ from pydantic import BaseModel, EmailStr, Field
 class UserBase(BaseModel):
     name: str
     email: EmailStr
-    role: str = Field(..., description="Roles: consumer, d
+    role: str = Field(..., description="Roles: consumer, diy, mechanic")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
