@@ -140,7 +140,7 @@ export default function ToolDropPage() {
 
             <input
               type="text"
-              placeholder="Holtsville, NY"
+              placeholder="Farmingdale, NY"
               className="w-full bg-transparent py-4 text-sm text-gray-700 outline-none"
             />
           </div>

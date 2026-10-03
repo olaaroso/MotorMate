@@ -364,7 +364,7 @@ export default function ToolListingPage() {
                   type="text"
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
-                  placeholder="e.g. Holtsville, NY"
+                  placeholder="e.g. Farmingdale, NY"
                   className="w-full rounded-xl border border-gray-300 py-3 pl-11 pr-4 outline-none focus:border-[#001F3F]"
                   required
                 />
