@@ -1,4 +1,5 @@
 import UserSidebar from "@/components/UserSidebar";
+import UserMenu from "@/components/UserMenu";
 import { Bell } from "lucide-react";
 
 export default function UserLayout({
@@ -22,7 +23,7 @@ export default function UserLayout({
           />
 
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gray-200 font-semibold text-[#001F3F]">
-            JD
+            <UserMenu />
           </div>
 
         </header>
