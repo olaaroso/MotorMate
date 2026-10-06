@@ -66,7 +66,6 @@ export default function VehicleCard({
     const [prediction, setPrediction] = useState<PredictionItem | null>(null);
     const [predLoading, setPredLoading] = useState(false);
 
-    // Open modal and initialize form state (eliminates cascading render effect)
     const handleOpenEdit = () => {
         setMileage(vehicle.current_mileage || 0);
         setDrivingHabits(vehicle.driving_habits || "City Commute");
@@ -76,7 +75,6 @@ export default function VehicleCard({
         setIsEditing(true);
     };
 
-    // Fetch ML predictions when vehicle properties mutate
     useEffect(() => {
         async function loadPrediction() {
             if (!vehicle.vin && !vehicle.make) return;
