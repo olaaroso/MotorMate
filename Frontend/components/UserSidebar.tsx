@@ -31,7 +31,7 @@ const links = [
   },
   {
     name: "ToolDrop",
-    href: "/tools",
+    href: "/tooldrop",
     icon: Hammer,
   },
   {
