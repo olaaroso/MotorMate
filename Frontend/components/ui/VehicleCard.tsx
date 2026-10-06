@@ -1,4 +1,3 @@
-TypeScript
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -51,7 +50,7 @@ export default function VehicleCard({
         "Overview" | "Maintenance" | "Service History" | "Documents"
     >("Overview");
 
-    // Edit State
+    // Edit Modal State
     const [isEditing, setIsEditing] = useState(false);
     const [mileage, setMileage] = useState(vehicle.current_mileage || 0);
     const [drivingHabits, setDrivingHabits] = useState(
@@ -63,17 +62,21 @@ export default function VehicleCard({
     const [loading, setLoading] = useState(false);
     const [deleting, setDeleting] = useState(false);
 
+    // Dynamic Prediction State
     const [prediction, setPrediction] = useState<PredictionItem | null>(null);
     const [predLoading, setPredLoading] = useState(false);
 
-    useEffect(() => {
+    // Open modal and initialize form state (eliminates cascading render effect)
+    const handleOpenEdit = () => {
         setMileage(vehicle.current_mileage || 0);
         setDrivingHabits(vehicle.driving_habits || "City Commute");
         setMake(vehicle.make || "");
         setModel(vehicle.model || "");
         setYear(vehicle.year || new Date().getFullYear());
-    }, [vehicle]);
+        setIsEditing(true);
+    };
 
+    // Fetch ML predictions when vehicle properties mutate
     useEffect(() => {
         async function loadPrediction() {
             if (!vehicle.vin && !vehicle.make) return;
@@ -103,7 +106,13 @@ export default function VehicleCard({
         }
 
         loadPrediction();
-    }, [vehicle.vin, vehicle.current_mileage, vehicle.driving_habits, apiUrl]);
+    }, [
+        vehicle.vin,
+        vehicle.make,
+        vehicle.current_mileage,
+        vehicle.driving_habits,
+        apiUrl,
+    ]);
 
     const handleUpdate = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -145,9 +154,10 @@ export default function VehicleCard({
             );
 
             setIsEditing(false);
-        } catch (err: any) {
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Error updating vehicle.";
             console.error(err);
-            alert(err.message || "Error updating vehicle.");
+            alert(message);
         } finally {
             setLoading(false);
         }
@@ -179,9 +189,10 @@ export default function VehicleCard({
             }
 
             onVehicleRemoved?.(vehicleId);
-        } catch (err: any) {
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Error removing vehicle.";
             console.error(err);
-            alert(err.message || "Error removing vehicle.");
+            alert(message);
         } finally {
             setDeleting(false);
         }
@@ -191,12 +202,10 @@ export default function VehicleCard({
         <div className="w-full rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm transition hover:shadow-md">
             {/* Top Section */}
             <div className="flex flex-col gap-6 md:flex-row">
-                {/* Placeholder Vehicle Image Box */}
-                <div className="flex h-44 w-full items-center justify-center rounded-xl bg-neutral-100 text-sm font-medium text-neutral-400 md:w-56 flex-shrink-0">
+                <div className="flex h-44 w-full shrink-0 items-center justify-center rounded-xl bg-neutral-100 text-sm font-medium text-neutral-400 md:w-56">
                     Vehicle Image
                 </div>
 
-                {/* Vehicle Identity & Actions */}
                 <div className="flex flex-1 flex-col justify-between">
                     <div>
                         <div className="flex items-start justify-between">
@@ -208,18 +217,17 @@ export default function VehicleCard({
                   <span className="text-sm font-medium text-neutral-500">
                     {(vehicle.current_mileage ?? 0).toLocaleString()} miles
                   </span>
-                                    <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-[#001F3F] border border-blue-100">
+                                    <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-[#001F3F]">
                     {vehicle.driving_habits || "City Commute"}
                   </span>
                                 </div>
                             </div>
 
-                            {/* Action Buttons */}
                             <div className="flex items-center gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => setIsEditing(true)}
-                                    className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-1.5 text-sm font-medium text-neutral-700 hover:bg-neutral-50 hover:text-neutral-900 transition"
+                                    onClick={handleOpenEdit}
+                                    className="flex items-center gap-1.5 rounded-lg border border-neutral-200 px-3.5 py-1.5 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50 hover:text-neutral-900"
                                 >
                                     <Edit3 className="h-3.5 w-3.5" />
                                     Edit
@@ -228,7 +236,7 @@ export default function VehicleCard({
                                     type="button"
                                     onClick={handleRemove}
                                     disabled={deleting}
-                                    className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50/50 px-3 py-1.5 text-sm font-medium text-red-600 hover:bg-red-100 hover:text-red-700 disabled:opacity-50 transition"
+                                    className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50/50 px-3 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-100 hover:text-red-700 disabled:opacity-50"
                                 >
                                     <Trash2 className="h-4 w-4" />
                                     {deleting ? "Removing..." : "Remove"}
@@ -236,7 +244,6 @@ export default function VehicleCard({
                             </div>
                         </div>
 
-                        {/* Spec Fields */}
                         <div className="mt-5 grid grid-cols-3 gap-6 text-sm">
                             <div>
                 <span className="block text-xs font-medium text-neutral-400">
@@ -267,7 +274,7 @@ export default function VehicleCard({
                 </div>
             </div>
 
-            {/* Tabs Navigation */}
+            {/* Tabs */}
             <div className="mt-8 border-b border-neutral-200">
                 <nav className="flex gap-8 text-sm font-medium">
                     {(
@@ -289,11 +296,10 @@ export default function VehicleCard({
                 </nav>
             </div>
 
-            {/* Tab Panels */}
+            {/* Overview Cards */}
             <div className="mt-6">
                 {activeTab === "Overview" && (
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        {/* Predicted Maintenance Card (Dynamic) */}
                         <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4">
               <span className="text-xs font-medium text-neutral-500">
                 Predicted Maintenance
@@ -325,7 +331,6 @@ export default function VehicleCard({
                             </div>
                         </div>
 
-                        {/* Last Service Card */}
                         <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4">
               <span className="text-xs font-medium text-neutral-500">
                 Last Service
@@ -341,7 +346,6 @@ export default function VehicleCard({
                             </div>
                         </div>
 
-                        {/* Total Services Card */}
                         <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4">
               <span className="text-xs font-medium text-neutral-500">
                 Total Services
@@ -352,7 +356,6 @@ export default function VehicleCard({
                             </div>
                         </div>
 
-                        {/* Estimated Repair Cost Card */}
                         <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4">
               <span className="text-xs font-medium text-neutral-500">
                 Estimated Repair Cost
@@ -390,7 +393,7 @@ export default function VehicleCard({
                 )}
             </div>
 
-            {/* Edit Vehicle & Driving Habits */}
+            {/* Edit Modal */}
             {isEditing && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
                     <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
@@ -406,7 +409,7 @@ export default function VehicleCard({
                             <button
                                 type="button"
                                 onClick={() => setIsEditing(false)}
-                                className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-600 transition"
+                                className="rounded-lg p-1 text-neutral-400 transition hover:bg-neutral-100 hover:text-neutral-600"
                             >
                                 <X className="h-5 w-5" />
                             </button>
@@ -422,7 +425,7 @@ export default function VehicleCard({
                                         type="number"
                                         value={year}
                                         onChange={(e) => setYear(Number(e.target.value))}
-                                        className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none"
+                                        className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:outline-none"
                                         required
                                     />
                                 </div>
@@ -434,7 +437,7 @@ export default function VehicleCard({
                                         type="text"
                                         value={make}
                                         onChange={(e) => setMake(e.target.value)}
-                                        className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none"
+                                        className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:outline-none"
                                         required
                                     />
                                 </div>
@@ -446,7 +449,7 @@ export default function VehicleCard({
                                         type="text"
                                         value={model}
                                         onChange={(e) => setModel(e.target.value)}
-                                        className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none"
+                                        className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:outline-none"
                                         required
                                     />
                                 </div>
@@ -461,7 +464,7 @@ export default function VehicleCard({
                                     min="0"
                                     value={mileage}
                                     onChange={(e) => setMileage(Number(e.target.value))}
-                                    className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none"
+                                    className="mt-1 w-full rounded-lg border border-neutral-300 p-2 text-sm text-neutral-900 focus:outline-none"
                                     placeholder="e.g. 74200"
                                     required
                                 />
@@ -474,7 +477,7 @@ export default function VehicleCard({
                                 <select
                                     value={drivingHabits}
                                     onChange={(e) => setDrivingHabits(e.target.value)}
-                                    className="mt-1 w-full rounded-lg border border-neutral-300 bg-white p-2 text-sm text-neutral-900 focus:border-blue-500 focus:outline-none"
+                                    className="mt-1 w-full rounded-lg border border-neutral-300 bg-white p-2 text-sm text-neutral-900 focus:outline-none"
                                 >
                                     <option value="City Commute">City / Stop-and-Go Commute</option>
                                     <option value="Highway">Highway / Long Distance</option>
@@ -489,14 +492,14 @@ export default function VehicleCard({
                                 <button
                                     type="button"
                                     onClick={() => setIsEditing(false)}
-                                    className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-50 transition"
+                                    className="rounded-lg border border-neutral-300 px-4 py-2 text-sm font-medium text-neutral-700 transition hover:bg-neutral-50"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={loading}
-                                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 transition"
+                                    className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
                                 >
                                     {loading && <Loader2 className="h-4 w-4 animate-spin" />}
                                     {loading ? "Saving..." : "Save Changes"}
