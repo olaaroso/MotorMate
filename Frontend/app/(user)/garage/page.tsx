@@ -1,749 +1,491 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import {
-  Plus,
-  Wrench,
-  CalendarDays,
-  FileText,
-  Tag,
-  Loader2,
-  X,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ElementType,
+  type FormEvent,
+} from "react";
+import {
+  AlertTriangle,
   Car,
+  CircleDollarSign,
+  Loader2,
   PenTool,
-  Trash2,
+  Plus,
+  X,
 } from "lucide-react";
-
 import { onAuthStateChanged } from "firebase/auth";
+
 import { auth } from "@/lib/firebase";
+import VehicleCard, {
+  type PredictionItem,
+  type Vehicle,
+} from "../../../components/VehicleCard";
 
-type VehicleData = {
-  id?: string;
-  vin?: string | null;
+const apiUrl =
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  name: string;
-  mileage: string;
+const DRIVING_HABITS = [
+  { value: "City Commute", label: "City / Stop-and-Go Commute" },
+  { value: "Highway", label: "Highway / Long Distance" },
+  { value: "Mixed", label: "Mixed Commute (50/50)" },
+  {
+    value: "Severe / Towing",
+    label: "Severe (Frequent Towing, Mountain Driving)",
+  },
+] as const;
 
-  make: string;
-  model: string;
-  year: string;
+function titleCase(value: string) {
+  if (!value) return "";
 
-  maintenance: string;
-  maintenanceDistance: string;
-
-  lastService: string;
-  serviceType: string;
-  totalServices: string;
-
-  value: string;
-};
-
-type PredictionItem = {
-  part: string;
-  probability: number;
-  estimated_cost: number;
-};
-
-function titleCase(str: string): string {
-  if (!str) return "";
-
-  return str
+  return value
     .toLowerCase()
     .split(" ")
-    .map(
-      (word) =>
-        word.charAt(0).toUpperCase() + word.slice(1)
-    )
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
 
-export default function GaragePage() {
-  const [vehicles, setVehicles] = useState<VehicleData[]>([]);
+type RawVehicle = {
+  _id?: string;
+  id?: string;
+  vehicle_id?: string;
 
+  owner_id?: string;
+
+  vin?: string | null;
+
+  make?: string;
+  Make?: string;
+
+  model?: string;
+  Model?: string;
+
+  year?: number | string;
+  ModelYear?: number | string;
+
+  current_mileage?: number | string;
+
+  driving_habits?: string;
+
+  created_at?: string;
+};
+
+function normalizeVehicle(rawVehicle: RawVehicle): Vehicle {
+  const rawYear = Number(rawVehicle.year || rawVehicle.ModelYear);
+
+  return {
+    _id: rawVehicle._id || rawVehicle.id || rawVehicle.vehicle_id,
+    id: rawVehicle.id || rawVehicle._id || rawVehicle.vehicle_id,
+    owner_id: rawVehicle.owner_id,
+    vin: rawVehicle.vin || null,
+    make: titleCase(String(rawVehicle.make || rawVehicle.Make || "Unknown")),
+    model: titleCase(String(rawVehicle.model || rawVehicle.Model || "Vehicle")),
+    year: rawYear || new Date().getFullYear(),
+    current_mileage: Number(rawVehicle.current_mileage) || 0,
+    driving_habits: rawVehicle.driving_habits || "City Commute",
+    created_at: rawVehicle.created_at,
+  };
+}
+
+function getVehicleId(vehicle: Vehicle) {
+  return vehicle._id || vehicle.id || "";
+}
+
+export default function GaragePage() {
+  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
+  const [predictions, setPredictions] = useState<
+    Record<string, PredictionItem | null>
+  >({});
   const [garageLoading, setGarageLoading] = useState(true);
 
   const [modalType, setModalType] = useState<
     "tabs" | "vin" | "manual" | null
   >(null);
-
-  const [activeTab, setActiveTab] = useState<
-    "vin" | "manual"
-  >("vin");
+  const [activeTab, setActiveTab] = useState<"vin" | "manual">("vin");
 
   const [vinInput, setVinInput] = useState("");
   const [makeInput, setMakeInput] = useState("");
   const [modelInput, setModelInput] = useState("");
-
   const [yearInput, setYearInput] = useState(
     new Date().getFullYear().toString()
   );
+  const [mileageInput, setMileageInput] = useState("50000");
+  const [drivingHabitsInput, setDrivingHabitsInput] =
+    useState("City Commute");
 
-  const [mileageInput, setMileageInput] =
-    useState("50000");
-
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-
-  const [vehicleToDelete, setVehicleToDelete] =
-    useState<VehicleData | null>(null);
-
-  const [deleteLoading, setDeleteLoading] =
-    useState(false);
-
-  const apiUrl =
-    process.env.NEXT_PUBLIC_API_URL ||
-    "http://127.0.0.1:8000";
-
-  // ======================================================
-  // LOAD SAVED VEHICLES
-  // ======================================================
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [registerError, setRegisterError] = useState("");
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(
-      auth,
-      async (user) => {
-        if (!user) {
-          setVehicles([]);
-          setGarageLoading(false);
-          return;
-        }
-
-        try {
-          setGarageLoading(true);
-
-          const response = await fetch(
-            `${apiUrl}/api/vin/vehicles/${user.uid}`
-          );
-
-          if (!response.ok) {
-            const errorData = await response
-              .json()
-              .catch(() => ({}));
-
-            throw new Error(
-              errorData.detail ||
-                "Failed to load saved vehicles."
-            );
-          }
-
-          const result = await response.json();
-
-          const savedVehicles: VehicleData[] =
-            await Promise.all(
-              result.vehicles.map(async (car: any) => {
-                const formattedMake = titleCase(
-                  String(car.make || "")
-                );
-
-                const formattedModel = titleCase(
-                  String(car.model || "")
-                );
-
-                const formattedYear = String(
-                  car.year || ""
-                );
-
-                let maintenance =
-                  "Inspection Required";
-
-                let maintenanceDistance =
-                  "Prediction unavailable";
-
-                let value = "N/A";
-
-                if (car.vin) {
-                  try {
-                    const predictionResponse =
-                      await fetch(
-                        `${apiUrl}/api/predict/`,
-                        {
-                          method: "POST",
-                          headers: {
-                            "Content-Type":
-                              "application/json",
-                          },
-                          body: JSON.stringify({
-                            vin: car.vin,
-                            mileage:
-                              Number(
-                                car.current_mileage
-                              ) || 0,
-                          }),
-                        }
-                      );
-
-                    if (predictionResponse.ok) {
-                      const predictionData =
-                        await predictionResponse.json();
-
-                      const prediction:
-                        | PredictionItem
-                        | undefined =
-                        predictionData
-                          .upcoming_repairs?.[0];
-
-                      if (prediction) {
-                        maintenance =
-                          prediction.part;
-
-                        maintenanceDistance =
-                          `${Math.round(
-                            prediction.probability *
-                              100
-                          )}% likelihood`;
-
-                        value =
-                          `$${prediction.estimated_cost}`;
-                      }
-                    } else {
-                      console.warn(
-                        "Prediction endpoint returned:",
-                        predictionResponse.status
-                      );
-                    }
-                  } catch (predictionError) {
-                    console.warn(
-                      "Prediction failed:",
-                      predictionError
-                    );
-                  }
-                }
-
-                return {
-                  id: car._id,
-                  vin: car.vin,
-
-                  name: formattedYear
-                    ? `${formattedYear} ${formattedMake} ${formattedModel}`
-                    : `${formattedMake} ${formattedModel}`,
-
-                  mileage: `${Number(
-                    car.current_mileage || 0
-                  ).toLocaleString()} miles`,
-
-                  make: formattedMake,
-                  model: formattedModel,
-                  year:
-                    formattedYear || "N/A",
-
-                  maintenance,
-                  maintenanceDistance,
-
-                  lastService:
-                    "No service recorded",
-
-                  serviceType: "N/A",
-
-                  totalServices: "0",
-
-                  value,
-                };
-              })
-            );
-
-          setVehicles(savedVehicles);
-        } catch (error) {
-          console.error(
-            "Failed to load garage:",
-            error
-          );
-
-          setVehicles([]);
-        } finally {
-          setGarageLoading(false);
-        }
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setVehicles([]);
+        setPredictions({});
+        setGarageLoading(false);
+        return;
       }
-    );
+
+      try {
+        setGarageLoading(true);
+
+        const response = await fetch(
+          `${apiUrl}/api/vin/vehicles/${user.uid}`
+        );
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(
+            errorData.detail || "Failed to load saved vehicles."
+          );
+        }
+
+        const result = await response.json();
+        const savedVehicles = (result.vehicles || []).map(normalizeVehicle);
+
+        setVehicles(savedVehicles);
+        setPredictions({});
+      } catch (error) {
+        console.error("Failed to load garage:", error);
+        setVehicles([]);
+        setPredictions({});
+      } finally {
+        setGarageLoading(false);
+      }
+    });
 
     return () => unsubscribe();
-  }, [apiUrl]);
-
-  // ======================================================
-  // MODAL HELPERS
-  // ======================================================
+  }, []);
 
   const closeModal = () => {
     setModalType(null);
-
     setActiveTab("vin");
-
     setVinInput("");
     setMakeInput("");
     setModelInput("");
-
-    setYearInput(
-      new Date().getFullYear().toString()
-    );
-
+    setYearInput(new Date().getFullYear().toString());
     setMileageInput("50000");
-
-    setErrorMsg("");
+    setDrivingHabitsInput("City Commute");
+    setRegisterError("");
   };
 
   const openDualTabModal = () => {
     setActiveTab("vin");
-    setErrorMsg("");
+    setRegisterError("");
     setModalType("tabs");
   };
 
   const openVinModal = () => {
     setActiveTab("vin");
-    setErrorMsg("");
+    setRegisterError("");
     setModalType("vin");
   };
 
   const openManualModal = () => {
     setActiveTab("manual");
-    setErrorMsg("");
+    setRegisterError("");
     setModalType("manual");
   };
 
-  // ======================================================
-  // REGISTER VEHICLE
-  // ======================================================
-
-  const handleRegister = async (
-    e: React.FormEvent
-  ) => {
-    e.preventDefault();
-
-    setLoading(true);
-    setErrorMsg("");
+  const handleRegister = async (event: FormEvent) => {
+    event.preventDefault();
 
     const currentUser = auth.currentUser;
 
     if (!currentUser) {
-      setErrorMsg(
-        "You must be signed in to add a vehicle."
-      );
-
-      setLoading(false);
+      setRegisterError("You must be signed in to add a vehicle.");
       return;
     }
 
-    const currentUserId = currentUser.uid;
+    const mileage = Number.parseInt(mileageInput, 10) || 0;
 
-    const mileageNum =
-      parseInt(mileageInput, 10) || 0;
+    if (mileage < 0) {
+      setRegisterError("Mileage cannot be negative.");
+      return;
+    }
+
+    setRegisterLoading(true);
+    setRegisterError("");
 
     try {
-      let endpoint =
-        `${apiUrl}/api/vin/register`;
-
-      let payload: Record<string, any> = {};
+      let endpoint = `${apiUrl}/api/vin/register`;
+      let payload: Record<string, string | number>;
 
       if (activeTab === "vin") {
-        if (!vinInput.trim()) {
-          throw new Error(
-            "Please enter a valid VIN."
-          );
+        const vin = vinInput.trim().toUpperCase();
+
+        if (vin.length !== 17) {
+          throw new Error("VIN must be exactly 17 characters long.");
         }
 
-        endpoint =
-          `${apiUrl}/api/vin/register`;
-
         payload = {
-          vin: vinInput
-            .trim()
-            .toUpperCase(),
-
-          owner_id: currentUserId,
-
-          current_mileage: mileageNum,
+          vin,
+          owner_id: currentUser.uid,
+          current_mileage: mileage,
+          driving_habits: drivingHabitsInput,
         };
       } else {
-        if (
-          !makeInput.trim() ||
-          !modelInput.trim() ||
-          !yearInput.trim()
-        ) {
-          throw new Error(
-            "Make, Model, and Year are required."
-          );
+        const year = Number.parseInt(yearInput, 10);
+
+        if (!makeInput.trim() || !modelInput.trim()) {
+          throw new Error("Make and model are required.");
         }
 
-        endpoint =
-          `${apiUrl}/api/vin/manual`;
+        if (!year || year < 1900 || year > 2100) {
+          throw new Error("Please enter a valid model year.");
+        }
 
+        endpoint = `${apiUrl}/api/vin/manual`;
         payload = {
-          owner_id: currentUserId,
-
+          owner_id: currentUser.uid,
           make: makeInput.trim(),
-
           model: modelInput.trim(),
-
-          year: parseInt(
-            yearInput,
-            10
-          ),
-
-          current_mileage: mileageNum,
+          year,
+          current_mileage: mileage,
+          driving_habits: drivingHabitsInput,
         };
       }
 
       const response = await fetch(endpoint, {
         method: "POST",
-
-        headers: {
-          "Content-Type":
-            "application/json",
-        },
-
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => ({}));
-
+        const errorData = await response.json().catch(() => ({}));
         throw new Error(
-          errorData.detail ||
-            `Registration failed (${response.status})`
+          errorData.detail || `Registration failed (${response.status})`
         );
       }
 
-      const registered =
-        await response.json();
-
-      const data =
+      const registered = await response.json();
+      const vehicleData =
         registered.vehicle_details ||
         registered.vehicle ||
         registered.data ||
         registered.specs ||
         registered;
 
-      const rawYear =
-        data.year ||
-        data.Year ||
-        data.model_year ||
-        "";
+      const newVehicle = normalizeVehicle({
+        ...vehicleData,
+        _id: vehicleData._id || registered.vehicle_id,
+        owner_id: vehicleData.owner_id || currentUser.uid,
+        current_mileage:
+          vehicleData.current_mileage === undefined
+            ? mileage
+            : vehicleData.current_mileage,
+        driving_habits:
+          vehicleData.driving_habits || drivingHabitsInput,
+      });
 
-      const rawMake =
-        data.make ||
-        data.Make ||
-        "Unknown";
+      setVehicles((previous) => {
+        const newVehicleId = getVehicleId(newVehicle);
+        const alreadyExists = previous.some((vehicle) => {
+          const existingId = getVehicleId(vehicle);
 
-      const rawModel =
-        data.model ||
-        data.Model ||
-        "Vehicle";
-
-      const formattedMake =
-        titleCase(String(rawMake));
-
-      const formattedModel =
-        titleCase(String(rawModel));
-
-      const formattedYear =
-        String(rawYear).trim();
-
-      let maintenance =
-        "Inspection Required";
-
-      let maintenanceDistance =
-        "Prediction unavailable";
-
-      let repairCost = "N/A";
-
-      if (
-        activeTab === "vin" &&
-        data.vin
-      ) {
-        try {
-          const predictionResponse =
-            await fetch(
-              `${apiUrl}/api/predict/`,
-              {
-                method: "POST",
-
-                headers: {
-                  "Content-Type":
-                    "application/json",
-                },
-
-                body: JSON.stringify({
-                  vin: data.vin,
-
-                  mileage:
-                    mileageNum,
-                }),
-              }
-            );
-
-          if (predictionResponse.ok) {
-            const predictionData =
-              await predictionResponse.json();
-
-            const prediction:
-              | PredictionItem
-              | undefined =
-              predictionData
-                .upcoming_repairs?.[0];
-
-            if (prediction) {
-              maintenance =
-                prediction.part;
-
-              maintenanceDistance =
-                `${Math.round(
-                  prediction.probability *
-                    100
-                )}% likelihood`;
-
-              repairCost =
-                `$${prediction.estimated_cost}`;
-            }
-          } else {
-            console.warn(
-              "Prediction endpoint returned:",
-              predictionResponse.status
-            );
-          }
-        } catch (predictionError) {
-          console.warn(
-            "Prediction error:",
-            predictionError
+          return (
+            (newVehicleId && existingId === newVehicleId) ||
+            (vehicle.vin && newVehicle.vin && vehicle.vin === newVehicle.vin)
           );
-        }
-      }
+        });
 
-      const newCar: VehicleData = {
-        id:
-          data._id ||
-          registered.vehicle_id,
-
-        vin:
-          data.vin || null,
-
-        name: formattedYear
-          ? `${formattedYear} ${formattedMake} ${formattedModel}`
-          : `${formattedMake} ${formattedModel}`,
-
-        mileage: `${mileageNum.toLocaleString()} miles`,
-
-        make: formattedMake,
-
-        model: formattedModel,
-
-        year:
-          formattedYear || "N/A",
-
-        maintenance,
-
-        maintenanceDistance,
-
-        lastService: "Just Added",
-
-        serviceType:
-          "Initial Inspection",
-
-        totalServices: "0",
-
-        value: repairCost,
-      };
-
-      setVehicles((prev) => {
-        const alreadyExists =
-          prev.some(
-            (car) =>
-              car.id === newCar.id ||
-              (
-                car.vin &&
-                newCar.vin &&
-                car.vin === newCar.vin
-              )
-          );
-
-        if (alreadyExists) {
-          return prev;
-        }
-
-        return [
-          newCar,
-          ...prev,
-        ];
+        if (alreadyExists) return previous;
+        return [newVehicle, ...previous];
       });
 
       closeModal();
-    } catch (err: any) {
-      console.error(
-        "Registration error:",
-        err
-      );
-
-      setErrorMsg(
-        err.message ||
-          "Failed to register vehicle."
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ======================================================
-  // DELETE VEHICLE
-  // ======================================================
-
-  const handleDeleteVehicle = async () => {
-    if (!vehicleToDelete?.id) {
-      return;
-    }
-
-    const currentUser = auth.currentUser;
-
-    if (!currentUser) {
-      return;
-    }
-
-    try {
-      setDeleteLoading(true);
-
-      const response = await fetch(
-        `${apiUrl}/api/vin/vehicles/${vehicleToDelete.id}?owner_id=${currentUser.uid}`,
-        {
-          method: "DELETE",
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => ({}));
-
-        throw new Error(
-          errorData.detail ||
-            "Failed to remove vehicle."
-        );
-      }
-
-      setVehicles((prev) =>
-        prev.filter(
-          (car) =>
-            car.id !== vehicleToDelete.id
-        )
-      );
-
-      setVehicleToDelete(null);
     } catch (error) {
-      console.error(
-        "Failed to remove vehicle:",
-        error
+      console.error("Registration error:", error);
+      setRegisterError(
+        error instanceof Error ? error.message : "Failed to register vehicle."
       );
     } finally {
-      setDeleteLoading(false);
+      setRegisterLoading(false);
     }
   };
 
-  // ======================================================
-  // PAGE
-  // ======================================================
+  const handleVehicleUpdated = useCallback((updatedVehicle: Vehicle) => {
+    const normalized = normalizeVehicle(updatedVehicle);
+    const updatedId = getVehicleId(normalized);
+
+    setVehicles((previous) =>
+      previous.map((vehicle) =>
+        getVehicleId(vehicle) === updatedId ? normalized : vehicle
+      )
+    );
+  }, []);
+
+  const handleVehicleRemoved = useCallback((vehicleId: string) => {
+    setVehicles((previous) =>
+      previous.filter((vehicle) => getVehicleId(vehicle) !== vehicleId)
+    );
+
+    setPredictions((previous) => {
+      if (!(vehicleId in previous)) return previous;
+
+      const next = { ...previous };
+      delete next[vehicleId];
+      return next;
+    });
+  }, []);
+
+  const handlePredictionUpdated = useCallback(
+    (vehicleId: string, prediction: PredictionItem | null) => {
+      setPredictions((previous) => {
+        const current = previous[vehicleId];
+
+        if (
+          current?.part === prediction?.part &&
+          current?.probability === prediction?.probability &&
+          current?.estimated_cost === prediction?.estimated_cost
+        ) {
+          return previous;
+        }
+
+        if (current === null && prediction === null) {
+          return previous;
+        }
+
+        return {
+          ...previous,
+          [vehicleId]: prediction,
+        };
+      });
+    },
+    []
+  );
+
+  const predictionSummary = useMemo(() => {
+    const loadedPredictions = Object.values(predictions).filter(
+      (prediction): prediction is PredictionItem => Boolean(prediction)
+    );
+
+    const alerts = loadedPredictions.filter(
+      (prediction) => prediction.part !== "None expected soon"
+    ).length;
+
+    const estimatedRepairs = loadedPredictions.reduce(
+      (total, prediction) => total + Number(prediction.estimated_cost || 0),
+      0
+    );
+
+    return { alerts, estimatedRepairs };
+  }, [predictions]);
 
   return (
-    <div className="mx-auto max-w-7xl p-8">
-      {/* PAGE HEADER */}
-
-      <section className="flex items-start justify-between">
+    <div className="mx-auto max-w-7xl px-5 py-7 sm:px-8 sm:py-9">
+      <section className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-[#001F3F]">
+          <h1 className="text-3xl font-bold tracking-tight text-[#001F3F] sm:text-4xl">
             My Garage
           </h1>
 
-          <p className="mt-1 text-gray-500">
-            Manage your vehicles, view details,
-            and track maintenance.
+          <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500 sm:text-base">
+            Manage your vehicles, driving habits, and records.
           </p>
         </div>
 
         <button
           type="button"
           onClick={openDualTabModal}
-          className="flex items-center gap-2 rounded-lg bg-[#001F3F] px-5 py-3 font-medium text-white transition hover:bg-[#003366]"
+          className="flex items-center justify-center gap-2 rounded-xl bg-[#001F3F] px-5 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#003366] hover:shadow-md active:translate-y-0"
         >
           <Plus size={18} />
-
           Add Vehicle
         </button>
       </section>
 
-      {/* GARAGE LOADING */}
+      {!garageLoading && (
+        <GarageSummary
+          vehicleCount={vehicles.length}
+          maintenanceAlerts={predictionSummary.alerts}
+          estimatedRepairTotal={predictionSummary.estimatedRepairs}
+        />
+      )}
 
       {garageLoading && (
-        <div className="mt-8 flex items-center justify-center rounded-xl border bg-white p-12 text-gray-500">
-          <Loader2
-            size={22}
-            className="mr-3 animate-spin"
-          />
+        <div className="mt-8 space-y-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            {[1, 2, 3].map((item) => (
+              <div
+                key={item}
+                className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-white"
+              />
+            ))}
+          </div>
 
-          Loading your garage...
+          <div className="flex items-center justify-center rounded-2xl border border-slate-200 bg-white p-12 text-slate-500 shadow-sm">
+            <Loader2 size={22} className="mr-3 animate-spin text-[#001F3F]" />
+            Loading your garage...
+          </div>
         </div>
       )}
 
-      {/* EMPTY GARAGE */}
-
-      {!garageLoading &&
-        vehicles.length === 0 && (
-          <div className="mt-8 rounded-xl border bg-white p-10 text-center">
-            <Car
-              size={38}
-              className="mx-auto text-gray-300"
-            />
-
-            <h2 className="mt-4 text-xl font-bold text-[#001F3F]">
-              Your garage is empty
-            </h2>
-
-            <p className="mt-2 text-gray-500">
-              Add your first vehicle to start
-              tracking maintenance.
-            </p>
+      {!garageLoading && vehicles.length === 0 && (
+        <div className="mt-8 rounded-2xl border border-slate-200 bg-white px-8 py-14 text-center shadow-sm">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-100 text-[#001F3F]">
+            <Car size={32} />
           </div>
-        )}
 
-      {/* SAVED VEHICLES */}
+          <h2 className="mt-5 text-xl font-bold text-[#001F3F]">
+            Your garage is empty
+          </h2>
 
-      {!garageLoading && (
-        <div className="space-y-6">
-          {vehicles.map((car) => (
-            <VehicleGarageCard
-              key={
-                car.id ||
-                car.vin ||
-                car.name
-              }
-              {...car}
-              onDelete={() =>
-                setVehicleToDelete(car)
-              }
+          <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
+            Add your first vehicle to begin tracking mileage, driving habits,
+            maintenance predictions, and repair information.
+          </p>
+
+          <button
+            type="button"
+            onClick={openDualTabModal}
+            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#003366]"
+          >
+            <Plus size={17} />
+            Add Your First Vehicle
+          </button>
+        </div>
+      )}
+
+      {!garageLoading && vehicles.length > 0 && (
+        <div className="mt-8 space-y-6">
+          {vehicles.map((vehicle) => (
+            <VehicleCard
+              key={getVehicleId(vehicle) || vehicle.vin || `${vehicle.year}-${vehicle.make}-${vehicle.model}`}
+              vehicle={vehicle}
+              onVehicleUpdated={handleVehicleUpdated}
+              onVehicleRemoved={handleVehicleRemoved}
+              onPredictionUpdated={handlePredictionUpdated}
             />
           ))}
         </div>
       )}
 
-      {/* ADD VEHICLE BANNER */}
+      <section className="relative mt-8 overflow-hidden rounded-2xl border border-dashed border-slate-300 bg-linear-to-br from-white to-slate-50 px-6 py-12 text-center">
+        <div className="pointer-events-none absolute -right-20 -top-20 h-48 w-48 rounded-full bg-[#001F3F]/5 blur-3xl" />
 
-      <section className="mt-8 rounded-xl border-2 border-dashed border-gray-300 p-12 text-center">
-        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border-2 border-[#001F3F]">
-          <Plus
-            size={32}
-            className="text-[#001F3F]"
-          />
+        <div className="relative mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#001F3F] text-white shadow-md">
+          <Plus size={26} />
         </div>
 
-        <h2 className="mt-4 text-xl font-bold">
-          Add Another Vehicle
+        <h2 className="relative mt-5 text-xl font-bold text-slate-900">
+          Add another vehicle
         </h2>
 
-        <p className="mt-1 text-gray-500">
-          Enter your VIN or add a vehicle
-          manually to get started.
+        <p className="relative mx-auto mt-2 max-w-md text-sm leading-6 text-slate-500">
+          Decode your VIN automatically or enter your vehicle details manually.
         </p>
 
-        <div className="mt-6 flex justify-center gap-4">
+        <div className="relative mt-6 flex flex-col justify-center gap-3 sm:flex-row">
           <button
             type="button"
             onClick={openVinModal}
-            className="rounded-lg bg-[#001F3F] px-8 py-3 text-white transition hover:bg-[#003366]"
+            className="rounded-xl bg-[#001F3F] px-7 py-3 text-sm font-semibold text-white transition hover:bg-[#003366] hover:shadow-md"
           >
             Add by VIN
           </button>
@@ -751,78 +493,70 @@ export default function GaragePage() {
           <button
             type="button"
             onClick={openManualModal}
-            className="rounded-lg bg-gray-200 px-8 py-3 text-gray-700 transition hover:bg-gray-300"
+            className="rounded-xl border border-slate-200 bg-white px-7 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:shadow-sm"
           >
             Add Manually
           </button>
         </div>
       </section>
 
-      {/* ADD VEHICLE MODAL */}
-
       {modalType !== null && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-
-            <div className="flex items-center justify-between border-b pb-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-2">
                 {activeTab === "vin" ? (
-                  <Car
-                    className="text-[#001F3F]"
-                    size={22}
-                  />
+                  <Car className="text-[#001F3F]" size={22} />
                 ) : (
-                  <PenTool
-                    className="text-[#001F3F]"
-                    size={20}
-                  />
+                  <PenTool className="text-[#001F3F]" size={20} />
                 )}
 
                 <h3 className="text-lg font-bold text-[#001F3F]">
                   {modalType === "tabs"
                     ? "Add New Vehicle"
                     : modalType === "vin"
-                    ? "Register Vehicle by VIN"
-                    : "Add Vehicle Manually"}
+                      ? "Register Vehicle by VIN"
+                      : "Add Vehicle Manually"}
                 </h3>
               </div>
 
               <button
                 type="button"
                 onClick={closeModal}
-                className="text-gray-400 hover:text-gray-600"
+                className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close add vehicle"
               >
                 <X size={20} />
               </button>
             </div>
 
             {modalType === "tabs" && (
-              <div className="mt-4 flex rounded-lg bg-gray-100 p-1 text-xs font-semibold">
+              <div className="mt-4 flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTab("vin");
-                    setErrorMsg("");
+                    setRegisterError("");
                   }}
-                  className={`flex-1 rounded-md py-1.5 transition ${
+                  className={`flex-1 rounded-lg py-2 transition ${
                     activeTab === "vin"
                       ? "bg-white text-[#001F3F] shadow-sm"
-                      : "text-gray-500 hover:text-gray-800"
+                      : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
-                  By VIN (Automated)
+                  By VIN
                 </button>
 
                 <button
                   type="button"
                   onClick={() => {
                     setActiveTab("manual");
-                    setErrorMsg("");
+                    setRegisterError("");
                   }}
-                  className={`flex-1 rounded-md py-1.5 transition ${
+                  className={`flex-1 rounded-lg py-2 transition ${
                     activeTab === "manual"
                       ? "bg-white text-[#001F3F] shadow-sm"
-                      : "text-gray-500 hover:text-gray-800"
+                      : "text-slate-500 hover:text-slate-800"
                   }`}
                 >
                   Manual Entry
@@ -830,96 +564,76 @@ export default function GaragePage() {
               </div>
             )}
 
-            <form
-              onSubmit={handleRegister}
-              className="mt-5 space-y-4"
-            >
+            <form onSubmit={handleRegister} className="mt-5 space-y-4">
               {activeTab === "vin" ? (
                 <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600">
-                    Vehicle Identification Number
-                    (VIN)
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                    Vehicle Identification Number (VIN)
                   </label>
-
                   <input
                     type="text"
                     maxLength={17}
                     placeholder="e.g. TRUTC28N831014295"
                     value={vinInput}
-                    onChange={(e) =>
-                      setVinInput(
-                        e.target.value
-                      )
+                    onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setVinInput(event.target.value)
                     }
-                    className="mt-1 w-full rounded-lg border border-gray-300 p-3 font-mono text-sm tracking-wider uppercase focus:border-[#001F3F] focus:outline-none focus:ring-1 focus:ring-[#001F3F]"
+                    className="mt-1 w-full rounded-xl border border-slate-300 p-3 font-mono text-sm tracking-wider uppercase outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
                     required
                   />
-
-                  <p className="mt-1 text-xs text-gray-400">
-                    Must be a valid
-                    17-character VIN decoded via
-                    NHTSA.
+                  <p className="mt-1 text-xs text-slate-400">
+                    Must be a valid 17-character VIN decoded through NHTSA.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-3">
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
                         Make
                       </label>
-
                       <input
                         type="text"
                         placeholder="e.g. Ford"
                         value={makeInput}
-                        onChange={(e) =>
-                          setMakeInput(
-                            e.target.value
-                          )
+                        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                          setMakeInput(event.target.value)
                         }
-                        className="mt-1 w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#001F3F] focus:outline-none"
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
                         required
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
                         Model
                       </label>
-
                       <input
                         type="text"
                         placeholder="e.g. Mustang"
                         value={modelInput}
-                        onChange={(e) =>
-                          setModelInput(
-                            e.target.value
-                          )
+                        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                          setModelInput(event.target.value)
                         }
-                        className="mt-1 w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#001F3F] focus:outline-none"
+                        className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
                         required
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
                       Model Year
                     </label>
-
                     <input
                       type="number"
                       min={1900}
                       max={2100}
-                      placeholder="e.g. 2021"
                       value={yearInput}
-                      onChange={(e) =>
-                        setYearInput(
-                          e.target.value
-                        )
-                      }
-                      className="mt-1 w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#001F3F] focus:outline-none"
+                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                      setYearInput(event.target.value)
+                    }
+                      className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
                       required
                     />
                   </div>
@@ -927,34 +641,52 @@ export default function GaragePage() {
               )}
 
               <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
                   Current Odometer (Miles)
                 </label>
-
                 <input
                   type="number"
+                  min={0}
                   placeholder="e.g. 54000"
                   value={mileageInput}
-                  onChange={(e) =>
-                    setMileageInput(
-                      e.target.value
-                    )
+                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                    setMileageInput(event.target.value)
                   }
-                  className="mt-1 w-full rounded-lg border border-gray-300 p-2.5 text-sm focus:border-[#001F3F] focus:outline-none focus:ring-1 focus:ring-[#001F3F]"
+                  className="mt-1 w-full rounded-xl border border-slate-300 p-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
                 />
               </div>
 
-              {errorMsg && (
-                <div className="rounded-lg bg-red-50 p-3 text-xs text-red-600">
-                  {errorMsg}
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                  Driving Habits
+                </label>
+                <select
+                  value={drivingHabitsInput}
+                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+                    setDrivingHabitsInput(event.target.value)
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white p-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
+                >
+                  {DRIVING_HABITS.map((habit) => (
+                    <option key={habit.value} value={habit.value}>
+                      {habit.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {registerError && (
+                <div className="rounded-xl bg-red-50 p-3 text-sm text-red-600">
+                  {registerError}
                 </div>
               )}
 
-              <div className="flex justify-end gap-3 pt-3">
+              <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
                 <button
                   type="button"
+                  disabled={registerLoading}
                   onClick={closeModal}
-                  className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50"
+                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -962,96 +694,24 @@ export default function GaragePage() {
                 <button
                   type="submit"
                   disabled={
-                    loading ||
-                    (
-                      activeTab === "vin" &&
-                      vinInput.length !== 17
-                    )
+                    registerLoading ||
+                    (activeTab === "vin" && vinInput.trim().length !== 17)
                   }
-                  className="flex items-center gap-2 rounded-lg bg-[#001F3F] px-5 py-2 text-sm font-medium text-white transition hover:bg-[#003366] disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366] disabled:opacity-50"
                 >
-                  {loading ? (
-                    <>
-                      <Loader2
-                        size={16}
-                        className="animate-spin"
-                      />
-
-                      {activeTab === "vin"
-                        ? "Decoding VIN..."
-                        : "Saving..."}
-                    </>
-                  ) : activeTab === "vin" ? (
-                    "Register Car"
-                  ) : (
-                    "Add Car"
+                  {registerLoading && (
+                    <Loader2 size={16} className="animate-spin" />
                   )}
+                  {registerLoading
+                    ? activeTab === "vin"
+                      ? "Decoding VIN..."
+                      : "Saving..."
+                    : activeTab === "vin"
+                      ? "Register Car"
+                      : "Add Car"}
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* DELETE CONFIRMATION MODAL */}
-
-      {vehicleToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
-              <Trash2 size={22} />
-            </div>
-
-            <h2 className="mt-5 text-xl font-bold text-[#001F3F]">
-              Remove vehicle?
-            </h2>
-
-            <p className="mt-2 text-sm leading-6 text-gray-500">
-              Are you sure you want to remove{" "}
-              <span className="font-semibold text-gray-800">
-                {vehicleToDelete.name}
-              </span>{" "}
-              from your garage?
-            </p>
-
-            <p className="mt-2 text-sm text-red-600">
-              This action cannot be undone.
-            </p>
-
-            <div className="mt-6 flex justify-end gap-3">
-              <button
-                type="button"
-                disabled={deleteLoading}
-                onClick={() =>
-                  setVehicleToDelete(null)
-                }
-                className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                disabled={deleteLoading}
-                onClick={handleDeleteVehicle}
-                className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
-              >
-                {deleteLoading ? (
-                  <>
-                    <Loader2
-                      size={16}
-                      className="animate-spin"
-                    />
-                    Removing...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 size={16} />
-                    Remove Vehicle
-                  </>
-                )}
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1059,185 +719,72 @@ export default function GaragePage() {
   );
 }
 
-type VehicleGarageCardProps =
-  VehicleData & {
-    onDelete: () => void;
-  };
-
-function VehicleGarageCard({
-  name,
-  mileage,
-  make,
-  model,
-  year,
-  maintenance,
-  maintenanceDistance,
-  lastService,
-  serviceType,
-  totalServices,
-  value,
-  onDelete,
-}: VehicleGarageCardProps) {
+function GarageSummary({
+  vehicleCount,
+  maintenanceAlerts,
+  estimatedRepairTotal,
+}: {
+  vehicleCount: number;
+  maintenanceAlerts: number;
+  estimatedRepairTotal: number;
+}) {
   return (
-    <section className="mt-8 rounded-xl border bg-white p-6 shadow-sm">
-      <div className="flex flex-col gap-6 md:flex-row">
-        <div className="flex h-40 w-full items-center justify-center rounded-lg bg-gray-100 text-gray-400 md:w-56">
-          Vehicle Image
-        </div>
+    <section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+      <GarageSummaryCard
+        label="Vehicles"
+        value={vehicleCount.toString()}
+        description="Saved in your garage"
+        icon={Car}
+      />
 
-        <div className="flex-1">
-          <div className="flex justify-between gap-4">
-            <div>
-              <h2 className="text-2xl font-bold">
-                {name}
-              </h2>
+      <GarageSummaryCard
+        label="Maintenance Alerts"
+        value={maintenanceAlerts.toString()}
+        description={
+          maintenanceAlerts === 1
+            ? "Vehicle may need attention"
+            : "Vehicles may need attention"
+        }
+        icon={AlertTriangle}
+      />
 
-              <p className="text-gray-500">
-                {mileage}
-              </p>
-            </div>
-
-            <div className="flex items-start gap-2">
-              <button className="h-fit rounded bg-gray-100 px-4 py-2 text-sm hover:bg-gray-200">
-                Edit
-              </button>
-
-              <button
-                type="button"
-                onClick={onDelete}
-                className="flex h-fit items-center gap-2 rounded bg-red-50 px-4 py-2 text-sm font-medium text-red-600 transition hover:bg-red-100"
-              >
-                <Trash2 size={15} />
-                Remove
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-6 grid grid-cols-3 gap-6">
-            <div>
-              <p className="text-xs text-gray-500">
-                Make
-              </p>
-
-              <p className="font-medium">
-                {make}
-              </p>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500">
-                Model
-              </p>
-
-              <p className="font-medium">
-                {model}
-              </p>
-            </div>
-
-            <div>
-              <p className="text-xs text-gray-500">
-                Year
-              </p>
-
-              <p className="font-medium">
-                {year}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-6 flex gap-8 border-b text-sm">
-        <button className="border-b-2 border-[#001F3F] pb-3 font-semibold text-[#001F3F]">
-          Overview
-        </button>
-
-        <button className="pb-3 text-gray-500">
-          Maintenance
-        </button>
-
-        <button className="pb-3 text-gray-500">
-          Service History
-        </button>
-
-        <button className="pb-3 text-gray-500">
-          Documents
-        </button>
-      </div>
-
-      <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-4">
-        <GarageInfoCard
-          title="Predicted Maintenance"
-          icon={Wrench}
-        >
-          <p className="font-medium">
-            {maintenance}
-          </p>
-
-          <p className="text-sm text-amber-600">
-            {maintenanceDistance}
-          </p>
-        </GarageInfoCard>
-
-        <GarageInfoCard
-          title="Last Service"
-          icon={CalendarDays}
-        >
-          <p className="font-medium">
-            {lastService}
-          </p>
-
-          <p className="text-sm text-gray-500">
-            {serviceType}
-          </p>
-        </GarageInfoCard>
-
-        <GarageInfoCard
-          title="Total Services"
-          icon={FileText}
-        >
-          <p className="text-2xl font-semibold">
-            {totalServices}
-          </p>
-        </GarageInfoCard>
-
-        <GarageInfoCard
-          title="Estimated Repair Cost"
-          icon={Tag}
-        >
-          <p className="text-2xl font-semibold">
-            {value}
-          </p>
-        </GarageInfoCard>
-      </div>
+      <GarageSummaryCard
+        label="Estimated Repairs"
+        value={
+          estimatedRepairTotal > 0
+            ? `$${estimatedRepairTotal.toLocaleString()}`
+            : "$0"
+        }
+        description="Based on loaded predictions"
+        icon={CircleDollarSign}
+      />
     </section>
   );
 }
 
-type GarageInfoCardProps = {
-  title: string;
-  icon: React.ElementType;
-  children: React.ReactNode;
-};
-
-function GarageInfoCard({
-  title,
+function GarageSummaryCard({
+  label,
+  value,
+  description,
   icon: Icon,
-  children,
-}: GarageInfoCardProps) {
+}: {
+  label: string;
+  value: string;
+  description: string;
+  icon: ElementType;
+}) {
   return (
-    <div className="rounded-lg bg-gray-100 p-4">
-      <p className="text-xs text-gray-500">
-        {title}
-      </p>
+    <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md">
+      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#001F3F]/5 text-[#001F3F]">
+        <Icon size={22} />
+      </div>
 
-      <div className="mt-3 flex gap-3">
-        <Icon
-          size={22}
-          className="shrink-0 text-[#001F3F]"
-        />
-
-        <div>{children}</div>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+          {label}
+        </p>
+        <p className="mt-1 text-2xl font-bold text-slate-900">{value}</p>
+        <p className="mt-0.5 text-xs text-slate-500">{description}</p>
       </div>
     </div>
   );
