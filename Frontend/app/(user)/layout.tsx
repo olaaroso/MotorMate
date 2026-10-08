@@ -8,31 +8,27 @@ export default function UserLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <div className="flex min-h-screen bg-[#F8F8FF]">
-
+    <div className="flex min-h-screen bg-[#F7F9FC]">
       <UserSidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-30 flex h-18 items-center justify-end border-b border-white/10 bg-[#001F3F] px-5 sm:px-8">
+          <button
+            type="button"
+            aria-label="Notifications"
+            className="mr-3 flex h-10 w-10 items-center justify-center rounded-xl text-white/75 transition hover:bg-white/10 hover:text-white"
+          >
+            <Bell size={19} />
+          </button>
 
-        {/* Top bar */}
-        <header className="flex h-20 items-center justify-end border-b bg-white px-8">
+          <div className="h-6 w-px bg-white/20" />
 
-          <Bell
-            size={22}
-            className="mr-6 text-[#001F3F]"
-          />
-
-          <div className="flex h-11 w-11 items-center justify-center rounded-full bg-gray-200 font-semibold text-[#001F3F]">
+          <div className="ml-3">
             <UserMenu />
           </div>
-
         </header>
 
-        {/* Page goes here */}
-        <main className="flex-1">
-          {children}
-        </main>
-
+        <main className="flex-1">{children}</main>
       </div>
     </div>
   );
