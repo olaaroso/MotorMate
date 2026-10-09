@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ClipboardList,
@@ -10,16 +13,112 @@ import {
   ThumbsUp,
   Wrench,
 } from "lucide-react";
+import { onAuthStateChanged } from "firebase/auth";
+
+import { auth } from "@/lib/firebase";
 import StatCard from "@/components/StatCard";
 
+const apiUrl =
+  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+type OperatingHours = Record<string, string>;
+
+type MechanicProfileResponse = {
+  shop_name?: string;
+  address?: string;
+  phone?: string;
+  services_offered?: string[];
+  price_per_hour?: number;
+  operating_hours?: OperatingHours;
+};
+
+const DAY_ORDER = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+
+const DAY_ABBREV: Record<string, string> = {
+  monday: "Mon",
+  tuesday: "Tue",
+  wednesday: "Wed",
+  thursday: "Thu",
+  friday: "Fri",
+  saturday: "Sat",
+  sunday: "Sun",
+};
+
+function summarizeHours(hours?: OperatingHours) {
+  if (!hours || Object.keys(hours).length === 0) {
+    return "Hours not set yet";
+  }
+
+  const entries = DAY_ORDER.filter((day) => hours[day]?.trim()).map(
+    (day) => `${DAY_ABBREV[day]}: ${hours[day]}`
+  );
+
+  return entries.length ? entries.join(" · ") : "Hours not set yet";
+}
+
 export default function MechanicPage() {
+  const [profile, setProfile] = useState<MechanicProfileResponse | null>(
+    null
+  );
+  const [hasProfile, setHasProfile] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const response = await fetch(`${apiUrl}/api/mechanics/${user.uid}`);
+
+        if (response.status === 404) {
+          setHasProfile(false);
+          setLoading(false);
+          return;
+        }
+
+        if (!response.ok) {
+          throw new Error("Failed to load shop profile.");
+        }
+
+        const result = await response.json();
+        setProfile(result.profile || {});
+        setHasProfile(true);
+      } catch (err) {
+        console.error("Failed to load mechanic dashboard:", err);
+        setHasProfile(false);
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const shopName = profile?.shop_name || "Your Shop";
+  const servicesCount = profile?.services_offered?.length ?? 0;
+  const laborRate =
+    profile?.price_per_hour !== undefined && profile?.price_per_hour !== null
+      ? `$${profile.price_per_hour}/hr`
+      : "Not set";
+
   return (
     <div className="mx-auto max-w-7xl px-5 py-7 sm:px-8 sm:py-9">
       {/* WELCOME + STATUS */}
       <section className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
-            Welcome, Jason&apos;s Auto Repair
+            Welcome{!loading && hasProfile ? `, ${shopName}` : ""}
           </h1>
 
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 sm:text-base">
@@ -39,6 +138,23 @@ export default function MechanicPage() {
         </div>
       </section>
 
+      {!loading && !hasProfile && (
+        <section className="mt-6 flex flex-col items-start gap-3 rounded-2xl border border-dashed border-slate-300 bg-white p-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-slate-600">
+            You haven&apos;t set up your shop profile yet. Customers won&apos;t
+            be able to find you until you do.
+          </p>
+
+          <Link
+            href="/mechanic/shop"
+            className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366]"
+          >
+            <Pencil size={14} />
+            Create Shop Profile
+          </Link>
+        </section>
+      )}
+
       {/* STAT CARDS */}
       <section className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-3">
         <StatCard
@@ -51,7 +167,7 @@ export default function MechanicPage() {
 
         <StatCard
           title="Services Offered"
-          value={6}
+          value={loading ? "—" : servicesCount}
           icon={Wrench}
           helper="Active service types"
           tone="blue"
@@ -59,7 +175,7 @@ export default function MechanicPage() {
 
         <StatCard
           title="Labor Rate"
-          value="$110/hr"
+          value={loading ? "—" : laborRate}
           icon={DollarSign}
           helper="Your standard rate"
           tone="slate"
@@ -165,10 +281,29 @@ export default function MechanicPage() {
           </div>
 
           <div className="space-y-4 p-6">
-            <ProfileRow icon={MapPin} label="123 Main St, Farmingdale" />
-            <ProfileRow icon={Clock} label="Mon-Sat, 8am-5pm" />
-            <ProfileRow icon={Wrench} label="Brakes, oil, tires, diagnostics" />
-            <ProfileRow icon={DollarSign} label="$110/hr labor rate" />
+            {loading ? (
+              <p className="text-sm text-slate-400">Loading shop profile...</p>
+            ) : (
+              <>
+                <ProfileRow
+                  icon={MapPin}
+                  label={profile?.address || "Address not set yet"}
+                />
+                <ProfileRow
+                  icon={Clock}
+                  label={summarizeHours(profile?.operating_hours)}
+                />
+                <ProfileRow
+                  icon={Wrench}
+                  label={
+                    profile?.services_offered?.length
+                      ? profile.services_offered.join(", ")
+                      : "No services listed yet"
+                  }
+                />
+                <ProfileRow icon={DollarSign} label={`${laborRate} labor rate`} />
+              </>
+            )}
           </div>
         </div>
       </section>

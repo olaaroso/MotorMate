@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -23,11 +23,20 @@ class UserBase(BaseModel):
         return permission in self.permissions
 
 
-class MechanicProfile(UserBase):
+class MechanicProfile(BaseModel):
+    """
+    Shop/business profile for a mechanic, keyed by the Firebase Auth UID
+    (owner_id). Decoupled from UserBase since it is not tied to the
+    (currently unused) backend auth/role system.
+    """
+
+    owner_id: str
     shop_name: str
     address: str
-    services_offered: List[str]
-    price_per_hour: float = Field(..., gt=0)
+    phone: Optional[str] = None
+    services_offered: List[str] = Field(default_factory=list)
+    price_per_hour: Optional[float] = Field(None, ge=0)
+    operating_hours: Optional[Dict[str, str]] = None
     rating: float = Field(default=5.0, ge=0, le=5)
 
 
