@@ -4,7 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import routes_auth, routes_mechanic, routes_predict, routes_vin
+from app.api import (
+    routes_auth,
+    routes_diy,
+    routes_mechanic,
+    routes_predict,
+    routes_vin,
+)
+
 from app.core.database import close_mongo_connection, connect_to_mongo
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -46,6 +53,7 @@ app.include_router(routes_auth.router)
 app.include_router(routes_vin.router)
 app.include_router(routes_predict.router)
 app.include_router(routes_mechanic.router)
+app.include_router(routes_diy.router)
 
 
 @app.get("/")

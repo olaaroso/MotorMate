@@ -6,6 +6,7 @@ import {
   Camera,
   CheckCircle2,
   DollarSign,
+  Loader2,
   MapPin,
   Package,
   Plus,
@@ -14,6 +15,8 @@ import {
   ToolCase,
 } from "lucide-react";
 import Link from "next/link";
+
+import { auth } from "@/lib/firebase";
 
 const categories = [
   "Hand Tools",
@@ -30,19 +33,158 @@ export default function ToolListingPage() {
   const [toolName, setToolName] = useState("");
   const [category, setCategory] = useState("");
   const [description, setDescription] = useState("");
+  const [specifications, setSpecifications] = useState("");
+
   const [dailyRate, setDailyRate] = useState("");
   const [deposit, setDeposit] = useState("");
+
   const [location, setLocation] = useState("");
   const [condition, setCondition] = useState("Good");
   const [available, setAvailable] = useState(true);
-  const [submitted, setSubmitted] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  const apiUrl =
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://127.0.0.1:8000";
+
+  // ======================================================
+  // PUBLISH LISTING
+  // ======================================================
+
+  const handleSubmit = async (
+    e: React.FormEvent
+  ) => {
     e.preventDefault();
 
-    // Front-end only for now.
-    // Later this can POST to Firebase / your backend.
-    setSubmitted(true);
+    setSubmitted(false);
+    setErrorMsg("");
+    setLoading(true);
+
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      setErrorMsg(
+        "You must be signed in to publish a tool listing."
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    const price = Number(dailyRate);
+    const depositAmount = Number(deposit || 0);
+
+    if (
+      !toolName.trim() ||
+      !category.trim() ||
+      !description.trim() ||
+      !location.trim()
+    ) {
+      setErrorMsg(
+        "Please complete all required fields."
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    if (!price || price <= 0) {
+      setErrorMsg(
+        "Please enter a valid daily rental rate."
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const sellerName =
+        currentUser.displayName ||
+        currentUser.email?.split("@")[0] ||
+        "MotorMate User";
+
+      const response = await fetch(
+        `${apiUrl}/api/diy/listings`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type": "application/json",
+          },
+
+          body: JSON.stringify({
+            owner_id: currentUser.uid,
+
+            seller_name: sellerName,
+
+            item_name: toolName.trim(),
+
+            category,
+
+            condition,
+
+            price,
+
+            deposit: depositAmount,
+
+            location: location.trim(),
+
+            availability: available
+              ? "available"
+              : "unavailable",
+
+            description: description.trim(),
+
+            specifications:
+              specifications.trim() || null,
+
+            photo_urls: [],
+
+            distance: 0,
+
+            rating: 0,
+
+            reviews: 0,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({}));
+
+        setErrorMsg(
+          errorData.detail ||
+            `Failed to publish listing (${response.status})`
+        );
+
+        return;
+      }
+
+      const result = await response.json();
+
+      console.log(
+        "Listing successfully created:",
+        result
+      );
+
+      setSubmitted(true);
+    } catch (error) {
+      console.error(
+        "Failed to publish listing:",
+        error
+      );
+
+      setErrorMsg(
+        "Could not connect to the MotorMate backend."
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -68,8 +210,9 @@ export default function ToolListingPage() {
           </h1>
 
           <p className="mt-2 max-w-2xl text-gray-500">
-            Create a rental listing for automotive tools you own and make them
-            available to other MotorMate users.
+            Create a rental listing for automotive
+            tools you own and make them available
+            to other MotorMate users.
           </p>
         </div>
 
@@ -85,7 +228,8 @@ export default function ToolListingPage() {
               </p>
 
               <p className="text-xs text-gray-500">
-                Add accurate details before publishing.
+                Add accurate details before
+                publishing.
               </p>
             </div>
           </div>
@@ -96,15 +240,29 @@ export default function ToolListingPage() {
 
       {submitted && (
         <section className="mt-6 flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-green-800">
-          <CheckCircle2 className="mt-0.5 shrink-0" size={20} />
+          <CheckCircle2
+            className="mt-0.5 shrink-0"
+            size={20}
+          />
 
           <div>
-            <p className="font-semibold">Listing preview created.</p>
+            <p className="font-semibold">
+              Listing published successfully.
+            </p>
+
             <p className="mt-1 text-sm">
-              This page is currently front-end only. You can connect it to
-              Firebase or the backend later.
+              Your tool has been saved to MotorMate
+              and is now available through ToolDrop.
             </p>
           </div>
+        </section>
+      )}
+
+      {/* ERROR MESSAGE */}
+
+      {errorMsg && (
+        <section className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {errorMsg}
         </section>
       )}
 
@@ -127,6 +285,7 @@ export default function ToolListingPage() {
                 <h2 className="text-xl font-bold text-[#001F3F]">
                   Tool Information
                 </h2>
+
                 <p className="text-sm text-gray-500">
                   Tell renters what you are listing.
                 </p>
@@ -134,6 +293,8 @@ export default function ToolListingPage() {
             </div>
 
             <div className="mt-6 grid gap-5 md:grid-cols-2">
+              {/* TOOL NAME */}
+
               <div className="md:col-span-2">
                 <label className="text-sm font-semibold text-gray-700">
                   Tool Name
@@ -142,12 +303,16 @@ export default function ToolListingPage() {
                 <input
                   type="text"
                   value={toolName}
-                  onChange={(e) => setToolName(e.target.value)}
+                  onChange={(e) =>
+                    setToolName(e.target.value)
+                  }
                   placeholder="e.g. Milwaukee Cordless Impact Wrench"
                   className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 outline-none transition focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
                   required
                 />
               </div>
+
+              {/* CATEGORY */}
 
               <div>
                 <label className="text-sm font-semibold text-gray-700">
@@ -156,19 +321,28 @@ export default function ToolListingPage() {
 
                 <select
                   value={category}
-                  onChange={(e) => setCategory(e.target.value)}
+                  onChange={(e) =>
+                    setCategory(e.target.value)
+                  }
                   className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-[#001F3F]"
                   required
                 >
-                  <option value="">Select a category</option>
+                  <option value="">
+                    Select a category
+                  </option>
 
                   {categories.map((item) => (
-                    <option key={item} value={item}>
+                    <option
+                      key={item}
+                      value={item}
+                    >
                       {item}
                     </option>
                   ))}
                 </select>
               </div>
+
+              {/* CONDITION */}
 
               <div>
                 <label className="text-sm font-semibold text-gray-700">
@@ -177,7 +351,9 @@ export default function ToolListingPage() {
 
                 <select
                   value={condition}
-                  onChange={(e) => setCondition(e.target.value)}
+                  onChange={(e) =>
+                    setCondition(e.target.value)
+                  }
                   className="mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-[#001F3F]"
                 >
                   <option>Like New</option>
@@ -187,6 +363,8 @@ export default function ToolListingPage() {
                 </select>
               </div>
 
+              {/* DESCRIPTION */}
+
               <div className="md:col-span-2">
                 <label className="text-sm font-semibold text-gray-700">
                   Description
@@ -194,17 +372,51 @@ export default function ToolListingPage() {
 
                 <textarea
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={(e) =>
+                    setDescription(e.target.value)
+                  }
                   rows={5}
-                  placeholder="Describe the tool, what it includes, important specifications, and any usage notes..."
+                  maxLength={500}
+                  placeholder="Describe the tool, what it includes, and any important usage notes..."
                   className="mt-2 w-full resize-none rounded-xl border border-gray-300 px-4 py-3 outline-none transition focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
                   required
                 />
 
                 <div className="mt-2 flex justify-between text-xs text-gray-400">
-                  <span>Include accessories and important details.</span>
-                  <span>{description.length}/500</span>
+                  <span>
+                    Include accessories and
+                    important details.
+                  </span>
+
+                  <span>
+                    {description.length}/500
+                  </span>
                 </div>
+              </div>
+
+              {/* SPECIFICATIONS */}
+
+              <div className="md:col-span-2">
+                <label className="text-sm font-semibold text-gray-700">
+                  Specifications
+                </label>
+
+                <textarea
+                  value={specifications}
+                  onChange={(e) =>
+                    setSpecifications(
+                      e.target.value
+                    )
+                  }
+                  rows={3}
+                  placeholder="e.g. 1/2-inch drive, 18V battery, 1,200 ft-lb max torque"
+                  className="mt-2 w-full resize-none rounded-xl border border-gray-300 px-4 py-3 outline-none transition focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
+                />
+
+                <p className="mt-2 text-xs text-gray-400">
+                  Add technical information that
+                  renters may need before renting.
+                </p>
               </div>
             </div>
           </section>
@@ -221,8 +433,10 @@ export default function ToolListingPage() {
                 <h2 className="text-xl font-bold text-[#001F3F]">
                   Tool Photos
                 </h2>
+
                 <p className="text-sm text-gray-500">
-                  Show renters the current condition of your tool.
+                  Show renters the current condition
+                  of your tool.
                 </p>
               </div>
             </div>
@@ -233,6 +447,7 @@ export default function ToolListingPage() {
                 className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-500 transition hover:border-[#001F3F] hover:bg-blue-50"
               >
                 <Plus size={26} />
+
                 <span className="mt-2 text-sm font-semibold">
                   Add Main Photo
                 </span>
@@ -243,7 +458,10 @@ export default function ToolListingPage() {
                 className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-[#001F3F]"
               >
                 <Camera size={24} />
-                <span className="mt-2 text-sm">Add Photo</span>
+
+                <span className="mt-2 text-sm">
+                  Add Photo
+                </span>
               </button>
 
               <button
@@ -251,9 +469,17 @@ export default function ToolListingPage() {
                 className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-[#001F3F]"
               >
                 <Camera size={24} />
-                <span className="mt-2 text-sm">Add Photo</span>
+
+                <span className="mt-2 text-sm">
+                  Add Photo
+                </span>
               </button>
             </div>
+
+            <p className="mt-4 text-xs text-gray-400">
+              Photo upload will be connected to
+              storage in the next step.
+            </p>
           </section>
 
           {/* PRICING */}
@@ -268,13 +494,17 @@ export default function ToolListingPage() {
                 <h2 className="text-xl font-bold text-[#001F3F]">
                   Pricing
                 </h2>
+
                 <p className="text-sm text-gray-500">
-                  Set your rental price and refundable deposit.
+                  Set your rental price and
+                  refundable deposit.
                 </p>
               </div>
             </div>
 
             <div className="mt-6 grid gap-5 md:grid-cols-2">
+              {/* DAILY RATE */}
+
               <div>
                 <label className="text-sm font-semibold text-gray-700">
                   Daily Rental Rate
@@ -288,9 +518,14 @@ export default function ToolListingPage() {
 
                   <input
                     type="number"
-                    min="0"
+                    min="0.01"
+                    step="0.01"
                     value={dailyRate}
-                    onChange={(e) => setDailyRate(e.target.value)}
+                    onChange={(e) =>
+                      setDailyRate(
+                        e.target.value
+                      )
+                    }
                     placeholder="20"
                     className="w-full rounded-xl border border-gray-300 py-3 pl-10 pr-4 outline-none focus:border-[#001F3F]"
                     required
@@ -301,6 +536,8 @@ export default function ToolListingPage() {
                   Amount charged per day.
                 </p>
               </div>
+
+              {/* DEPOSIT */}
 
               <div>
                 <label className="text-sm font-semibold text-gray-700">
@@ -316,15 +553,19 @@ export default function ToolListingPage() {
                   <input
                     type="number"
                     min="0"
+                    step="0.01"
                     value={deposit}
-                    onChange={(e) => setDeposit(e.target.value)}
+                    onChange={(e) =>
+                      setDeposit(e.target.value)
+                    }
                     placeholder="50"
                     className="w-full rounded-xl border border-gray-300 py-3 pl-10 pr-4 outline-none focus:border-[#001F3F]"
                   />
                 </div>
 
                 <p className="mt-1 text-xs text-gray-400">
-                  Refundable when the tool is returned properly.
+                  Refundable when the tool is
+                  returned properly.
                 </p>
               </div>
             </div>
@@ -342,9 +583,10 @@ export default function ToolListingPage() {
                 <h2 className="text-xl font-bold text-[#001F3F]">
                   Pickup Location
                 </h2>
+
                 <p className="text-sm text-gray-500">
-                  Choose the general location where renters can pick up the
-                  tool.
+                  Choose the general location where
+                  renters can pick up the tool.
                 </p>
               </div>
             </div>
@@ -363,7 +605,9 @@ export default function ToolListingPage() {
                 <input
                   type="text"
                   value={location}
-                  onChange={(e) => setLocation(e.target.value)}
+                  onChange={(e) =>
+                    setLocation(e.target.value)
+                  }
                   placeholder="e.g. Farmingdale, NY"
                   className="w-full rounded-xl border border-gray-300 py-3 pl-11 pr-4 outline-none focus:border-[#001F3F]"
                   required
@@ -371,7 +615,8 @@ export default function ToolListingPage() {
               </div>
 
               <p className="mt-2 text-xs text-gray-400">
-                Your exact address should not be shown publicly.
+                Your exact address should not be
+                shown publicly.
               </p>
             </div>
           </section>
@@ -380,26 +625,29 @@ export default function ToolListingPage() {
         {/* RIGHT SIDE */}
 
         <aside className="space-y-6">
-          {/* PREVIEW */}
-
           <section className="rounded-2xl border bg-white p-5 shadow-sm xl:sticky xl:top-8">
             <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">
               Listing Preview
             </p>
 
             <div className="mt-4 flex h-44 items-center justify-center rounded-xl bg-gradient-to-br from-gray-50 to-gray-100">
-              <ToolCase size={55} className="text-gray-300" />
+              <ToolCase
+                size={55}
+                className="text-gray-300"
+              />
             </div>
 
             <div className="mt-5">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h3 className="text-lg font-bold text-gray-900">
-                    {toolName || "Your Tool Name"}
+                    {toolName ||
+                      "Your Tool Name"}
                   </h3>
 
                   <p className="mt-1 text-sm text-gray-500">
-                    {category || "Tool Category"}
+                    {category ||
+                      "Tool Category"}
                   </p>
                 </div>
 
@@ -408,7 +656,9 @@ export default function ToolListingPage() {
                     ${dailyRate || "0"}
                   </p>
 
-                  <p className="text-xs text-gray-400">per day</p>
+                  <p className="text-xs text-gray-400">
+                    per day
+                  </p>
                 </div>
               </div>
 
@@ -420,12 +670,17 @@ export default function ToolListingPage() {
 
                 <div className="flex items-center gap-2">
                   <MapPin size={16} />
-                  {location || "Pickup location"}
+
+                  {location ||
+                    "Pickup location"}
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Package size={16} />
-                  {available ? "Available for rent" : "Currently unavailable"}
+
+                  {available
+                    ? "Available for rent"
+                    : "Currently unavailable"}
                 </div>
               </div>
             </div>
@@ -440,35 +695,57 @@ export default function ToolListingPage() {
                   </p>
 
                   <p className="mt-1 text-xs text-gray-500">
-                    Show this tool as available to renters.
+                    Show this tool as available to
+                    renters.
                   </p>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => setAvailable(!available)}
+                  onClick={() =>
+                    setAvailable(!available)
+                  }
                   className={`relative h-7 w-12 rounded-full transition ${
-                    available ? "bg-[#001F3F]" : "bg-gray-300"
+                    available
+                      ? "bg-[#001F3F]"
+                      : "bg-gray-300"
                   }`}
                 >
                   <span
                     className={`absolute top-1 h-5 w-5 rounded-full bg-white transition ${
-                      available ? "left-6" : "left-1"
+                      available
+                        ? "left-6"
+                        : "left-1"
                     }`}
                   />
                 </button>
               </div>
             </div>
 
+            {/* PUBLISH */}
+
             <button
               type="submit"
-              className="mt-6 w-full rounded-xl bg-[#001F3F] py-3.5 font-semibold text-white transition hover:bg-[#003366]"
+              disabled={loading}
+              className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-[#001F3F] py-3.5 font-semibold text-white transition hover:bg-[#003366] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Publish Listing
+              {loading ? (
+                <>
+                  <Loader2
+                    size={18}
+                    className="animate-spin"
+                  />
+
+                  Publishing...
+                </>
+              ) : (
+                "Publish Listing"
+              )}
             </button>
 
             <p className="mt-3 text-center text-xs text-gray-400">
-              You can edit or disable the listing later.
+              You can edit or disable the listing
+              later.
             </p>
           </section>
         </aside>
