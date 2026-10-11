@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Tag,
   ToolCase,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -46,6 +47,9 @@ export default function ToolListingPage() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL ||
     "http://127.0.0.1:8000";
@@ -53,6 +57,86 @@ export default function ToolListingPage() {
   // ======================================================
   // PUBLISH LISTING
   // ======================================================
+
+  const handlePhotoUpload = async (
+  event: React.ChangeEvent<HTMLInputElement>
+) => {
+  const file = event.target.files?.[0];
+
+  if (!file) return;
+
+  if (!file.type.startsWith("image/")) {
+    setErrorMsg("Please select an image file.");
+    return;
+  }
+
+  if (photoUrls.length >= 3) {
+    setErrorMsg(
+      "You can upload a maximum of 3 photos."
+    );
+    return;
+  }
+
+  const cloudName =
+    process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+
+  const uploadPreset =
+    process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+
+  if (!cloudName || !uploadPreset) {
+    setErrorMsg(
+      "Cloudinary configuration is missing."
+    );
+    return;
+  }
+
+  try {
+    setUploadingPhoto(true);
+    setErrorMsg("");
+
+    const formData = new FormData();
+
+    formData.append("file", file);
+    formData.append(
+      "upload_preset",
+      uploadPreset
+    );
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        "Photo upload failed."
+      );
+    }
+
+    const data = await response.json();
+
+    setPhotoUrls((current) => [
+      ...current,
+      data.secure_url,
+    ]);
+  } catch (error) {
+    console.error(
+      "Photo upload failed:",
+      error
+    );
+
+    setErrorMsg(
+      "Could not upload the photo."
+    );
+  } finally {
+    setUploadingPhoto(false);
+
+    event.target.value = "";
+  }
+};
 
   const handleSubmit = async (
     e: React.FormEvent
@@ -141,7 +225,7 @@ export default function ToolListingPage() {
             specifications:
               specifications.trim() || null,
 
-            photo_urls: [],
+            photo_urls: photoUrls,
 
             distance: 0,
 
@@ -423,64 +507,97 @@ export default function ToolListingPage() {
 
           {/* PHOTOS */}
 
-          <section className="rounded-2xl border bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#001F3F]">
-                <Camera size={20} />
-              </div>
+<section className="rounded-2xl border bg-white p-6 shadow-sm">
+  <div className="flex items-center gap-3">
+    <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#001F3F]">
+      <Camera size={20} />
+    </div>
 
-              <div>
-                <h2 className="text-xl font-bold text-[#001F3F]">
-                  Tool Photos
-                </h2>
+    <div>
+      <h2 className="text-xl font-bold text-[#001F3F]">
+        Tool Photos
+      </h2>
 
-                <p className="text-sm text-gray-500">
-                  Show renters the current condition
-                  of your tool.
-                </p>
-              </div>
-            </div>
+      <p className="text-sm text-gray-500">
+        Add up to 3 photos showing the
+        current condition of your tool.
+      </p>
+    </div>
+  </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-3">
-              <button
-                type="button"
-                className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-500 transition hover:border-[#001F3F] hover:bg-blue-50"
-              >
-                <Plus size={26} />
+  <div className="mt-6 grid gap-4 md:grid-cols-3">
+    {[0, 1, 2].map((index) => {
+      const photo = photoUrls[index];
 
-                <span className="mt-2 text-sm font-semibold">
-                  Add Main Photo
-                </span>
-              </button>
+      if (photo) {
+        return (
+          <div
+            key={index}
+            className="relative min-h-40 overflow-hidden rounded-xl border bg-gray-100"
+          >
+            <img
+              src={photo}
+              alt={`Tool photo ${index + 1}`}
+              className="h-40 w-full object-cover"
+            />
 
-              <button
-                type="button"
-                className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-[#001F3F]"
-              >
-                <Camera size={24} />
+            <button
+              type="button"
+              onClick={() =>
+                setPhotoUrls((current) =>
+                  current.filter(
+                    (_, photoIndex) =>
+                      photoIndex !== index
+                  )
+                )
+              }
+              className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-black/70 text-white transition hover:bg-black"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        );
+      }
 
-                <span className="mt-2 text-sm">
-                  Add Photo
-                </span>
-              </button>
+      return (
+        <label
+          key={index}
+          className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-500 transition hover:border-[#001F3F] hover:bg-blue-50"
+        >
+          {uploadingPhoto ? (
+            <Loader2
+              size={26}
+              className="animate-spin"
+            />
+          ) : index === 0 ? (
+            <Plus size={26} />
+          ) : (
+            <Camera size={24} />
+          )}
 
-              <button
-                type="button"
-                className="flex min-h-40 flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-[#001F3F]"
-              >
-                <Camera size={24} />
+          <span className="mt-2 text-sm font-semibold">
+            {index === 0
+              ? "Add Main Photo"
+              : "Add Photo"}
+          </span>
 
-                <span className="mt-2 text-sm">
-                  Add Photo
-                </span>
-              </button>
-            </div>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handlePhotoUpload}
+            className="hidden"
+            disabled={uploadingPhoto}
+          />
+        </label>
+      );
+    })}
+  </div>
 
-            <p className="mt-4 text-xs text-gray-400">
-              Photo upload will be connected to
-              storage in the next step.
-            </p>
-          </section>
+  <p className="mt-4 text-xs text-gray-400">
+    JPG, PNG, WEBP and other standard image
+    formats are supported.
+  </p>
+</section>
 
           {/* PRICING */}
 

@@ -30,6 +30,7 @@ interface ToolItem {
   reviews: number;
   seller_name: string;
   owner?: string;
+  photo_urls?: string[];
 }
 
 const CATEGORIES = [
@@ -451,19 +452,33 @@ export default function ToolDropPage() {
               <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
                 {tools.map((tool) => {
                   const Icon = getCategoryIcon(tool.category);
+                  const mainPhoto = tool.photo_urls?.[0];
 
                   return (
                       <div
                           key={tool.id || tool.item_name}
                           className="overflow-hidden rounded-2xl border bg-white transition hover:-translate-y-1 hover:shadow-lg"
                       >
-                        <div className="relative flex h-44 items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100">
-                          <Icon size={55} className="text-gray-300" />
+                        <div className="relative h-44 overflow-hidden bg-gradient-to-br from-gray-50 to-gray-100">
+  {mainPhoto ? (
+    <img
+      src={mainPhoto}
+      alt={tool.item_name}
+      className="h-full w-full object-cover"
+    />
+  ) : (
+    <div className="flex h-full w-full items-center justify-center">
+      <Icon
+        size={55}
+        className="text-gray-300"
+      />
+    </div>
+  )}
 
-                          <span className="absolute left-3 top-3 rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#001F3F] shadow-sm">
-                      {tool.category}
-                    </span>
-                        </div>
+  <span className="absolute left-3 top-3 rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#001F3F] shadow-sm">
+    {tool.category}
+  </span>
+</div>
 
                         <div className="p-5">
                           <div className="flex items-start justify-between gap-3">

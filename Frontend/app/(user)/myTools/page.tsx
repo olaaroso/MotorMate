@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  Camera,
   Edit3,
   Loader2,
   Package,
@@ -47,6 +48,9 @@ export default function MyToolsPage() {
 
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const [uploadingPhoto, setUploadingPhoto] =
+    useState(false);
 
   const apiUrl =
     process.env.NEXT_PUBLIC_API_URL ||
@@ -113,19 +117,151 @@ export default function MyToolsPage() {
   // ======================================================
 
   const availableTools = tools.filter(
-    (tool) => tool.availability === "available"
+    (tool) =>
+      tool.availability === "available"
   );
 
   const rentedTools = tools.filter(
-    (tool) => tool.availability === "rented"
+    (tool) =>
+      tool.availability === "rented"
   );
 
   const unavailableTools = tools.filter(
-    (tool) => tool.availability === "unavailable"
+    (tool) =>
+      tool.availability === "unavailable"
   );
 
   // ======================================================
-  // EDIT TOOL
+  // EDIT PHOTO UPLOAD
+  // ======================================================
+
+  const handleEditPhotoUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = event.target.files?.[0];
+
+    if (!file || !editingTool) return;
+
+    const existingPhotos =
+      editingTool.photo_urls || [];
+
+    if (existingPhotos.length >= 3) {
+      setErrorMsg(
+        "You can upload a maximum of 3 photos."
+      );
+
+      event.target.value = "";
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setErrorMsg(
+        "Please select a valid image file."
+      );
+
+      event.target.value = "";
+      return;
+    }
+
+    const cloudName =
+      process.env
+        .NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
+
+    const uploadPreset =
+      process.env
+        .NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
+
+    if (!cloudName || !uploadPreset) {
+      setErrorMsg(
+        "Cloudinary configuration is missing."
+      );
+
+      event.target.value = "";
+      return;
+    }
+
+    try {
+      setUploadingPhoto(true);
+      setErrorMsg("");
+
+      const formData = new FormData();
+
+      formData.append("file", file);
+
+      formData.append(
+        "upload_preset",
+        uploadPreset
+      );
+
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          "Photo upload failed."
+        );
+      }
+
+      const data = await response.json();
+
+      setEditingTool((current) => {
+        if (!current) return current;
+
+        return {
+          ...current,
+
+          photo_urls: [
+            ...(current.photo_urls || []),
+            data.secure_url,
+          ],
+        };
+      });
+    } catch (error) {
+      console.error(
+        "Edit photo upload failed:",
+        error
+      );
+
+      setErrorMsg(
+        "Could not upload the photo."
+      );
+    } finally {
+      setUploadingPhoto(false);
+
+      event.target.value = "";
+    }
+  };
+
+  // ======================================================
+  // REMOVE PHOTO FROM EDIT
+  // ======================================================
+
+  const removeEditPhoto = (
+    photoIndex: number
+  ) => {
+    setEditingTool((current) => {
+      if (!current) return current;
+
+      return {
+        ...current,
+
+        photo_urls: (
+          current.photo_urls || []
+        ).filter(
+          (_, index) =>
+            index !== photoIndex
+        ),
+      };
+    });
+  };
+
+  // ======================================================
+  // SAVE EDIT
   // ======================================================
 
   const handleSaveEdit = async () => {
@@ -137,6 +273,7 @@ export default function MyToolsPage() {
       setErrorMsg(
         "You must be signed in to edit a listing."
       );
+
       return;
     }
 
@@ -148,13 +285,17 @@ export default function MyToolsPage() {
       setErrorMsg(
         "Tool name, category, and location are required."
       );
+
       return;
     }
 
-    if (Number(editingTool.price) <= 0) {
+    if (
+      Number(editingTool.price) <= 0
+    ) {
       setErrorMsg(
         "Daily rental price must be greater than 0."
       );
+
       return;
     }
 
@@ -170,32 +311,52 @@ export default function MyToolsPage() {
           method: "PUT",
 
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
 
           body: JSON.stringify({
-            item_name: editingTool.item_name.trim(),
-            category: editingTool.category,
-            condition: editingTool.condition,
-            price: Number(editingTool.price),
+            item_name:
+              editingTool.item_name.trim(),
+
+            category:
+              editingTool.category,
+
+            condition:
+              editingTool.condition,
+
+            price: Number(
+              editingTool.price
+            ),
+
             deposit: Number(
               editingTool.deposit || 0
             ),
-            location: editingTool.location.trim(),
+
+            location:
+              editingTool.location.trim(),
+
             availability:
               editingTool.availability,
+
             description:
               editingTool.description || "",
+
             specifications:
-              editingTool.specifications || "",
+              editingTool.specifications ||
+              "",
+
+            photo_urls:
+              editingTool.photo_urls || [],
           }),
         }
       );
 
       if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => ({}));
+        const errorData =
+          await response
+            .json()
+            .catch(() => ({}));
 
         throw new Error(
           errorData.detail ||
@@ -203,7 +364,8 @@ export default function MyToolsPage() {
         );
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       setTools((currentTools) =>
         currentTools.map((tool) =>
@@ -243,6 +405,7 @@ export default function MyToolsPage() {
       setErrorMsg(
         "You must be signed in to delete a listing."
       );
+
       return;
     }
 
@@ -260,9 +423,10 @@ export default function MyToolsPage() {
       );
 
       if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => ({}));
+        const errorData =
+          await response
+            .json()
+            .catch(() => ({}));
 
         throw new Error(
           errorData.detail ||
@@ -273,7 +437,8 @@ export default function MyToolsPage() {
       setTools((currentTools) =>
         currentTools.filter(
           (tool) =>
-            tool.id !== deletingTool.id
+            tool.id !==
+            deletingTool.id
         )
       );
 
@@ -307,6 +472,7 @@ export default function MyToolsPage() {
       setErrorMsg(
         "You must be signed in to update a listing."
       );
+
       return;
     }
 
@@ -326,19 +492,22 @@ export default function MyToolsPage() {
           method: "PUT",
 
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
 
           body: JSON.stringify({
-            availability: newAvailability,
+            availability:
+              newAvailability,
           }),
         }
       );
 
       if (!response.ok) {
-        const errorData = await response
-          .json()
-          .catch(() => ({}));
+        const errorData =
+          await response
+            .json()
+            .catch(() => ({}));
 
         throw new Error(
           errorData.detail ||
@@ -346,7 +515,8 @@ export default function MyToolsPage() {
         );
       }
 
-      const data = await response.json();
+      const data =
+        await response.json();
 
       setTools((currentTools) =>
         currentTools.map((item) =>
@@ -376,19 +546,32 @@ export default function MyToolsPage() {
   const renderToolCard = (
     tool: ToolListing
   ) => {
+    const mainPhoto =
+      tool.photo_urls?.[0];
+
     return (
       <article
         key={tool.id}
         className="overflow-hidden rounded-2xl border bg-white shadow-sm"
       >
-        {/* IMAGE AREA */}
+        {/* IMAGE */}
 
-        <div className="flex h-44 items-center justify-center bg-gray-100">
-          <Package
-            size={52}
-            className="text-gray-300"
-          />
-        </div>
+        {mainPhoto ? (
+          <div className="h-44 overflow-hidden bg-gray-100">
+            <img
+              src={mainPhoto}
+              alt={tool.item_name}
+              className="h-full w-full object-cover"
+            />
+          </div>
+        ) : (
+          <div className="flex h-44 items-center justify-center bg-gray-100">
+            <Package
+              size={52}
+              className="text-gray-300"
+            />
+          </div>
+        )}
 
         <div className="p-5">
           <div className="flex items-start justify-between gap-4">
@@ -465,9 +648,10 @@ export default function MyToolsPage() {
             )}
           </div>
 
-          {/* AVAILABILITY TOGGLE */}
+          {/* AVAILABILITY */}
 
-          {tool.availability !== "rented" && (
+          {tool.availability !==
+            "rented" && (
             <div className="mt-4 flex items-center justify-between rounded-xl border p-3">
               <div>
                 <p className="text-sm font-semibold text-gray-800">
@@ -503,13 +687,18 @@ export default function MyToolsPage() {
             </div>
           )}
 
-          {/* ACTION BUTTONS */}
+          {/* ACTIONS */}
 
           <div className="mt-5 flex gap-2">
             <button
               type="button"
               onClick={() =>
-                setEditingTool(tool)
+                setEditingTool({
+                  ...tool,
+
+                  photo_urls:
+                    tool.photo_urls || [],
+                })
               }
               className="flex flex-1 items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold text-[#001F3F] transition hover:bg-gray-50"
             >
@@ -584,143 +773,152 @@ export default function MyToolsPage() {
         </div>
       )}
 
-      {/* EMPTY STATE */}
+      {/* EMPTY */}
 
-      {!loading && tools.length === 0 && (
-        <div className="mt-8 rounded-2xl border bg-white p-12 text-center shadow-sm">
-          <Package
-            size={46}
-            className="mx-auto text-gray-300"
-          />
+      {!loading &&
+        tools.length === 0 && (
+          <div className="mt-8 rounded-2xl border bg-white p-12 text-center shadow-sm">
+            <Package
+              size={46}
+              className="mx-auto text-gray-300"
+            />
 
-          <h2 className="mt-4 text-xl font-bold text-[#001F3F]">
-            You haven't listed any tools yet
-          </h2>
+            <h2 className="mt-4 text-xl font-bold text-[#001F3F]">
+              You haven't listed any tools yet
+            </h2>
 
-          <p className="mt-2 text-gray-500">
-            Create your first ToolDrop listing and
-            make your equipment available to other
-            MotorMate users.
-          </p>
+            <p className="mt-2 text-gray-500">
+              Create your first ToolDrop
+              listing and make your equipment
+              available to other MotorMate
+              users.
+            </p>
 
-          <Link
-            href="/toolListing"
-            className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-5 py-3 font-semibold text-white transition hover:bg-[#003366]"
-          >
-            <Plus size={17} />
-            List a Tool
-          </Link>
-        </div>
-      )}
+            <Link
+              href="/toolListing"
+              className="mt-6 inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-5 py-3 font-semibold text-white"
+            >
+              <Plus size={17} />
+              List a Tool
+            </Link>
+          </div>
+        )}
 
       {/* TOOL SECTIONS */}
 
-      {!loading && tools.length > 0 && (
-        <div className="mt-8 space-y-10">
-          {/* AVAILABLE */}
+      {!loading &&
+        tools.length > 0 && (
+          <div className="mt-8 space-y-10">
+            {/* AVAILABLE */}
 
-          <section>
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-[#001F3F]">
-                  Available
-                </h2>
+            <section>
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-[#001F3F]">
+                    Available
+                  </h2>
 
-                <p className="mt-1 text-sm text-gray-500">
-                  Tools currently available for
-                  other MotorMate users to rent.
-                </p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Tools currently available
+                    for other MotorMate users
+                    to rent.
+                  </p>
+                </div>
+
+                <span className="rounded-full bg-green-50 px-3 py-1 text-sm font-semibold text-green-700">
+                  {availableTools.length}
+                </span>
               </div>
 
-              <span className="rounded-full bg-green-50 px-3 py-1 text-sm font-semibold text-green-700">
-                {availableTools.length}
-              </span>
-            </div>
+              {availableTools.length >
+              0 ? (
+                <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                  {availableTools.map(
+                    renderToolCard
+                  )}
+                </div>
+              ) : (
+                <div className="mt-5 rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
+                  You don't currently have
+                  any available tools.
+                </div>
+              )}
+            </section>
 
-            {availableTools.length > 0 ? (
-              <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {availableTools.map(
-                  renderToolCard
-                )}
-              </div>
-            ) : (
-              <div className="mt-5 rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
-                You don't currently have any
-                available tools.
-              </div>
-            )}
-          </section>
+            {/* RENTED */}
 
-          {/* CURRENTLY RENTED */}
+            <section>
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-[#001F3F]">
+                    Currently Rented
+                  </h2>
 
-          <section>
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-[#001F3F]">
-                  Currently Rented
-                </h2>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Tools you own that are
+                    currently being used by
+                    another MotorMate user.
+                  </p>
+                </div>
 
-                <p className="mt-1 text-sm text-gray-500">
-                  Tools you own that are currently
-                  being used by another MotorMate
-                  user.
-                </p>
-              </div>
-
-              <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
-                {rentedTools.length}
-              </span>
-            </div>
-
-            {rentedTools.length > 0 ? (
-              <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {rentedTools.map(
-                  renderToolCard
-                )}
-              </div>
-            ) : (
-              <div className="mt-5 rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
-                None of your tools are currently
-                rented.
-              </div>
-            )}
-          </section>
-
-          {/* UNAVAILABLE */}
-
-          <section>
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-[#001F3F]">
-                  Unavailable
-                </h2>
-
-                <p className="mt-1 text-sm text-gray-500">
-                  Listings you've temporarily
-                  removed from rental availability.
-                </p>
+                <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
+                  {rentedTools.length}
+                </span>
               </div>
 
-              <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-600">
-                {unavailableTools.length}
-              </span>
-            </div>
+              {rentedTools.length > 0 ? (
+                <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                  {rentedTools.map(
+                    renderToolCard
+                  )}
+                </div>
+              ) : (
+                <div className="mt-5 rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
+                  None of your tools are
+                  currently rented.
+                </div>
+              )}
+            </section>
 
-            {unavailableTools.length > 0 ? (
-              <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                {unavailableTools.map(
-                  renderToolCard
-                )}
+            {/* UNAVAILABLE */}
+
+            <section>
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <h2 className="text-xl font-bold text-[#001F3F]">
+                    Unavailable
+                  </h2>
+
+                  <p className="mt-1 text-sm text-gray-500">
+                    Listings you've temporarily
+                    removed from rental
+                    availability.
+                  </p>
+                </div>
+
+                <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold text-gray-600">
+                  {
+                    unavailableTools.length
+                  }
+                </span>
               </div>
-            ) : (
-              <div className="mt-5 rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
-                You don't have any unavailable
-                tools.
-              </div>
-            )}
-          </section>
-        </div>
-      )}
+
+              {unavailableTools.length >
+              0 ? (
+                <div className="mt-5 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                  {unavailableTools.map(
+                    renderToolCard
+                  )}
+                </div>
+              ) : (
+                <div className="mt-5 rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">
+                  You don't have any
+                  unavailable tools.
+                </div>
+              )}
+            </section>
+          </div>
+        )}
 
       {/* EDIT MODAL */}
 
@@ -749,7 +947,99 @@ export default function MyToolsPage() {
               </button>
             </div>
 
-            <div className="mt-6 space-y-4">
+            <div className="mt-6 space-y-5">
+              {/* PHOTOS */}
+
+              <div>
+                <label className="text-sm font-semibold text-gray-700">
+                  Tool Photos
+                </label>
+
+                <p className="mt-1 text-xs text-gray-400">
+                  Add, remove, or replace up
+                  to 3 photos.
+                </p>
+
+                <div className="mt-3 grid grid-cols-3 gap-3">
+                  {[0, 1, 2].map(
+                    (index) => {
+                      const photo =
+                        editingTool
+                          .photo_urls?.[
+                          index
+                        ];
+
+                      if (photo) {
+                        return (
+                          <div
+                            key={index}
+                            className="relative h-28 overflow-hidden rounded-xl border bg-gray-100"
+                          >
+                            <img
+                              src={photo}
+                              alt={`Tool photo ${
+                                index + 1
+                              }`}
+                              className="h-full w-full object-cover"
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                removeEditPhoto(
+                                  index
+                                )
+                              }
+                              className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-black/70 text-white transition hover:bg-black"
+                            >
+                              <X
+                                size={
+                                  14
+                                }
+                              />
+                            </button>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <label
+                          key={index}
+                          className="flex h-28 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 text-gray-400 transition hover:border-[#001F3F] hover:bg-blue-50"
+                        >
+                          {uploadingPhoto ? (
+                            <Loader2
+                              size={20}
+                              className="animate-spin"
+                            />
+                          ) : (
+                            <Camera
+                              size={20}
+                            />
+                          )}
+
+                          <span className="mt-1 text-xs font-medium">
+                            Add Photo
+                          </span>
+
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={
+                              handleEditPhotoUpload
+                            }
+                            disabled={
+                              uploadingPhoto
+                            }
+                            className="hidden"
+                          />
+                        </label>
+                      );
+                    }
+                  )}
+                </div>
+              </div>
+
               {/* TOOL NAME */}
 
               <div>
@@ -759,18 +1049,21 @@ export default function MyToolsPage() {
 
                 <input
                   type="text"
-                  value={editingTool.item_name}
+                  value={
+                    editingTool.item_name
+                  }
                   onChange={(e) =>
                     setEditingTool({
                       ...editingTool,
-                      item_name: e.target.value,
+                      item_name:
+                        e.target.value,
                     })
                   }
-                  className="mt-2 w-full rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                  className="mt-2 w-full rounded-xl border px-4 py-3"
                 />
               </div>
 
-              {/* CATEGORY + CONDITION */}
+              {/* CATEGORY / CONDITION */}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
@@ -780,7 +1073,9 @@ export default function MyToolsPage() {
 
                   <input
                     type="text"
-                    value={editingTool.category}
+                    value={
+                      editingTool.category
+                    }
                     onChange={(e) =>
                       setEditingTool({
                         ...editingTool,
@@ -788,7 +1083,7 @@ export default function MyToolsPage() {
                           e.target.value,
                       })
                     }
-                    className="mt-2 w-full rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                    className="mt-2 w-full rounded-xl border px-4 py-3"
                   />
                 </div>
 
@@ -798,7 +1093,9 @@ export default function MyToolsPage() {
                   </label>
 
                   <select
-                    value={editingTool.condition}
+                    value={
+                      editingTool.condition
+                    }
                     onChange={(e) =>
                       setEditingTool({
                         ...editingTool,
@@ -806,17 +1103,28 @@ export default function MyToolsPage() {
                           e.target.value,
                       })
                     }
-                    className="mt-2 w-full rounded-xl border bg-white px-4 py-3 outline-none focus:border-[#001F3F]"
+                    className="mt-2 w-full rounded-xl border bg-white px-4 py-3"
                   >
-                    <option>Like New</option>
-                    <option>Excellent</option>
-                    <option>Good</option>
-                    <option>Fair</option>
+                    <option>
+                      Like New
+                    </option>
+
+                    <option>
+                      Excellent
+                    </option>
+
+                    <option>
+                      Good
+                    </option>
+
+                    <option>
+                      Fair
+                    </option>
                   </select>
                 </div>
               </div>
 
-              {/* PRICE + DEPOSIT */}
+              {/* PRICE / DEPOSIT */}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
@@ -828,16 +1136,19 @@ export default function MyToolsPage() {
                     type="number"
                     min="0.01"
                     step="0.01"
-                    value={editingTool.price}
+                    value={
+                      editingTool.price
+                    }
                     onChange={(e) =>
                       setEditingTool({
                         ...editingTool,
+
                         price: Number(
                           e.target.value
                         ),
                       })
                     }
-                    className="mt-2 w-full rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                    className="mt-2 w-full rounded-xl border px-4 py-3"
                   />
                 </div>
 
@@ -850,16 +1161,19 @@ export default function MyToolsPage() {
                     type="number"
                     min="0"
                     step="0.01"
-                    value={editingTool.deposit}
+                    value={
+                      editingTool.deposit
+                    }
                     onChange={(e) =>
                       setEditingTool({
                         ...editingTool,
+
                         deposit: Number(
                           e.target.value
                         ),
                       })
                     }
-                    className="mt-2 w-full rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                    className="mt-2 w-full rounded-xl border px-4 py-3"
                   />
                 </div>
               </div>
@@ -873,14 +1187,18 @@ export default function MyToolsPage() {
 
                 <input
                   type="text"
-                  value={editingTool.location}
+                  value={
+                    editingTool.location
+                  }
                   onChange={(e) =>
                     setEditingTool({
                       ...editingTool,
-                      location: e.target.value,
+
+                      location:
+                        e.target.value,
                     })
                   }
-                  className="mt-2 w-full rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                  className="mt-2 w-full rounded-xl border px-4 py-3"
                 />
               </div>
 
@@ -894,16 +1212,18 @@ export default function MyToolsPage() {
                 <textarea
                   rows={4}
                   value={
-                    editingTool.description || ""
+                    editingTool.description ||
+                    ""
                   }
                   onChange={(e) =>
                     setEditingTool({
                       ...editingTool,
+
                       description:
                         e.target.value,
                     })
                   }
-                  className="mt-2 w-full resize-none rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                  className="mt-2 w-full resize-none rounded-xl border px-4 py-3"
                 />
               </div>
 
@@ -923,21 +1243,25 @@ export default function MyToolsPage() {
                   onChange={(e) =>
                     setEditingTool({
                       ...editingTool,
+
                       specifications:
                         e.target.value,
                     })
                   }
-                  className="mt-2 w-full resize-none rounded-xl border px-4 py-3 outline-none focus:border-[#001F3F]"
+                  className="mt-2 w-full resize-none rounded-xl border px-4 py-3"
                 />
               </div>
             </div>
 
-            {/* EDIT BUTTONS */}
+            {/* BUTTONS */}
 
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
-                disabled={saving}
+                disabled={
+                  saving ||
+                  uploadingPhoto
+                }
                 onClick={() =>
                   setEditingTool(null)
                 }
@@ -948,9 +1272,14 @@ export default function MyToolsPage() {
 
               <button
                 type="button"
-                disabled={saving}
-                onClick={handleSaveEdit}
-                className="flex items-center gap-2 rounded-lg bg-[#001F3F] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366] disabled:opacity-60"
+                disabled={
+                  saving ||
+                  uploadingPhoto
+                }
+                onClick={
+                  handleSaveEdit
+                }
+                className="flex items-center gap-2 rounded-lg bg-[#001F3F] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {saving ? (
                   <>
@@ -958,11 +1287,13 @@ export default function MyToolsPage() {
                       size={16}
                       className="animate-spin"
                     />
+
                     Saving...
                   </>
                 ) : (
                   <>
                     <Save size={16} />
+
                     Save Changes
                   </>
                 )}
@@ -972,7 +1303,7 @@ export default function MyToolsPage() {
         </div>
       )}
 
-      {/* DELETE CONFIRMATION */}
+      {/* DELETE MODAL */}
 
       {deletingTool && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
@@ -986,16 +1317,19 @@ export default function MyToolsPage() {
             </h2>
 
             <p className="mt-2 text-sm leading-6 text-gray-500">
-              Are you sure you want to delete{" "}
+              Are you sure you want to
+              delete{" "}
               <span className="font-semibold text-gray-800">
-                {deletingTool.item_name}
+                {
+                  deletingTool.item_name
+                }
               </span>
               ?
             </p>
 
             <p className="mt-2 text-sm text-red-600">
-              This removes it from ToolDrop and
-              cannot be undone.
+              This removes it from
+              ToolDrop and cannot be undone.
             </p>
 
             <div className="mt-6 flex justify-end gap-3">
@@ -1014,7 +1348,7 @@ export default function MyToolsPage() {
                 type="button"
                 disabled={deleting}
                 onClick={handleDelete}
-                className="flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-60"
+                className="flex items-center gap-2 rounded-lg bg-red-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {deleting ? (
                   <>
@@ -1022,11 +1356,15 @@ export default function MyToolsPage() {
                       size={16}
                       className="animate-spin"
                     />
+
                     Deleting...
                   </>
                 ) : (
                   <>
-                    <Trash2 size={16} />
+                    <Trash2
+                      size={16}
+                    />
+
                     Delete Listing
                   </>
                 )}
