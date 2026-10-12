@@ -8,6 +8,7 @@ from app.api import (
     routes_auth,
     routes_diy,
     routes_mechanic,
+    routes_predict,
     routes_vin,
 )
 
@@ -89,6 +90,10 @@ app.include_router(
 
 app.include_router(
     routes_vin.router
+)
+
+app.include_router(
+    routes_predict.router
 )
 
 app.include_router(
