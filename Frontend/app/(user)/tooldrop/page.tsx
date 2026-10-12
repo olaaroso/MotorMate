@@ -526,12 +526,14 @@ export default function ToolDropPage() {
                             </div>
                           </div>
 
-                          <button
-                              type="button"
-                              className="mt-5 w-full rounded-lg bg-[#001F3F] py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366]"
-                          >
+                          {tool.id && (
+                          <Link
+                                  href={`/tooldrop/${tool.id}`}
+                                  className="mt-5 block w-full rounded-lg bg-[#001F3F] py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#003366]"
+                                >
                             View Tool
-                          </button>
+                          </Link>
+                          )}
                         </div>
                       </div>
                   );
