@@ -9,23 +9,53 @@ from app.models.user import MechanicProfile
 router = APIRouter(prefix="/api/mechanics", tags=["Mechanic Matching"])
 
 
+def get_mechanics_collection():
+    if db_instance.db is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database is not connected.",
+        )
+
+    return db_instance.db["mechanics"]
+
+
 @router.post("/register")
-async def register_mechanic(mechanic: MechanicProfile, _: dict = Depends(require_role("mechanic"))):
+async def register_mechanic(mechanic: MechanicProfile):
     """
-    Registers a new mechanic profile in the database.
+    Creates or updates (upsert) the mechanic's shop profile, keyed by
+    owner_id (the Firebase Auth UID). Safe to call both the first time
+    a mechanic sets up their shop and on every later edit.
     """
-    # Convert Pydantic model to a standard dictionary for MongoDB
+    owner_id = mechanic.owner_id.strip()
+
+    if not owner_id:
+        raise HTTPException(status_code=400, detail="owner_id is required.")
+
     mechanic_dict = mechanic.model_dump()
-    
+
     try:
-        result = await db_instance.db["mechanics"].insert_one(mechanic_dict)
+        mechanics_collection = get_mechanics_collection()
+
+        await mechanics_collection.update_one(
+            {"owner_id": owner_id},
+            {"$set": mechanic_dict},
+            upsert=True,
+        )
+
+        saved_profile = await mechanics_collection.find_one({"owner_id": owner_id})
+        if saved_profile:
+            saved_profile["_id"] = str(saved_profile["_id"])
+
         return {
-            "message": "Mechanic registered successfully",
-            "mechanic_id": str(result.inserted_id),
-            "shop_name": mechanic.shop_name
+            "message": "Mechanic profile saved successfully",
+            "mechanic_id": saved_profile["_id"] if saved_profile else None,
+            "profile": saved_profile,
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to register mechanic in the database.")
+        raise HTTPException(status_code=500, detail="Failed to save mechanic profile in the database.")
+
 
 @router.get("/search")
 async def search_mechanics(
@@ -66,3 +96,34 @@ async def search_mechanics(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to execute mechanic search.")
+
+
+# NOTE: this dynamic route must stay declared after "/search" above, since
+# FastAPI matches routes in declaration order and "/{owner_id}" would
+# otherwise shadow the static "/search" path.
+@router.get("/{owner_id}")
+async def get_mechanic_profile(owner_id: str):
+    """
+    Fetches a mechanic's own shop profile by owner_id (Firebase Auth UID).
+    Returns 404 if the mechanic has not created a profile yet.
+    """
+    owner_id = owner_id.strip()
+
+    if not owner_id:
+        raise HTTPException(status_code=400, detail="owner_id is required.")
+
+    try:
+        mechanics_collection = get_mechanics_collection()
+
+        profile = await mechanics_collection.find_one({"owner_id": owner_id})
+
+        if not profile:
+            raise HTTPException(status_code=404, detail="Mechanic profile not found.")
+
+        profile["_id"] = str(profile["_id"])
+
+        return {"profile": profile}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to retrieve mechanic profile.")
