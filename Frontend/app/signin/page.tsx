@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -88,9 +89,16 @@ export default function SigninPage() {
       <section className="hidden min-h-screen bg-[#001F3F] text-white lg:flex lg:flex-col lg:justify-between lg:px-12 lg:py-10">
 
         {/* Logo */}
-        <h1 className="font-serif text-4xl font-semibold">
-          MotorMate
-        </h1>
+        <div className="flex justify-center pt-10">
+          <Image
+            src="/MotorMate_Mascot.png"
+            alt="MotorMate mascot"
+            width={320}
+            height={320}
+            className="h-auto w-96 max-w-full"
+            priority
+          />
+        </div>
 
         {/* Bottom Text */}
         <div className="mb-12">
