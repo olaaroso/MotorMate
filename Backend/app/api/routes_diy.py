@@ -748,11 +748,57 @@ async def get_listing(
 
 
 
+        rental_requests_collection = (
+            get_rental_requests_collection()
+        )
+
+        reserved_ranges = []
+
+        reservations_cursor = (
+            rental_requests_collection.find(
+                {
+                    "listing_id": listing_id,
+                    "status": {
+                        "$in": [
+                            "approved",
+                            "active",
+                        ]
+                    },
+                    "end_date": {
+                        "$gte": date.today().isoformat(),
+                    },
+                }
+            )
+            .sort(
+                "start_date",
+                1,
+            )
+        )
+
+        async for reservation in reservations_cursor:
+            reserved_ranges.append(
+                {
+                    "request_id": str(
+                        reservation["_id"]
+                    ),
+                    "start_date": reservation.get(
+                        "start_date",
+                        "",
+                    ),
+                    "end_date": reservation.get(
+                        "end_date",
+                        "",
+                    ),
+                }
+            )
+
         return {
 
             "listing":
-
                 serialize_mongo_document(tool),
+
+            "reserved_ranges":
+                reserved_ranges,
 
         }
 
@@ -2257,6 +2303,145 @@ async def approve_rental_request(
             status_code=500,
             detail=(
                 "Failed to approve rental request: "
+                f"{str(exc)}"
+            ),
+        )
+
+
+# =========================================================
+# CANCEL APPROVED RENTAL
+# =========================================================
+
+
+@router.patch("/rental-requests/{request_id}/cancel")
+async def cancel_rental(
+    request_id: str,
+    owner_id: str,
+):
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid rental request ID.",
+        )
+
+    owner_id = owner_id.strip()
+
+    if not owner_id:
+        raise HTTPException(
+            status_code=400,
+            detail="owner_id is required.",
+        )
+
+    rental_requests_collection = (
+        get_rental_requests_collection()
+    )
+
+    try:
+        rental_request = (
+            await rental_requests_collection.find_one(
+                {
+                    "_id": ObjectId(request_id),
+                    "owner_id": owner_id,
+                }
+            )
+        )
+
+        if not rental_request:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "Rental not found or you do "
+                    "not own this listing."
+                ),
+            )
+
+        if rental_request.get("status") not in [
+            "approved",
+            "active",
+        ]:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Only an approved or active rental "
+                    "can be cancelled."
+                ),
+            )
+
+        end_date = str(
+            rental_request.get(
+                "end_date",
+                "",
+            )
+        )
+
+        if not end_date:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "This rental does not have "
+                    "a valid end date."
+                ),
+            )
+
+        if end_date < date.today().isoformat():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This rental has already ended and "
+                    "can no longer be cancelled."
+                ),
+            )
+
+        cancelled_at = datetime.now(
+            timezone.utc
+        ).isoformat()
+
+        await rental_requests_collection.update_one(
+            {
+                "_id": ObjectId(request_id),
+                "owner_id": owner_id,
+                "status": {
+                    "$in": [
+                        "approved",
+                        "active",
+                    ]
+                },
+            },
+            {
+                "$set": {
+                    "status": "cancelled",
+                    "cancelled_at": cancelled_at,
+                    "cancellation_reason":
+                        "Cancelled by tool owner.",
+                }
+            },
+        )
+
+        updated_request = (
+            await rental_requests_collection.find_one(
+                {
+                    "_id": ObjectId(request_id),
+                }
+            )
+        )
+
+        return {
+            "message":
+                "Rental cancelled successfully.",
+            "request":
+                serialize_mongo_document(
+                    updated_request
+                ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to cancel rental: "
                 f"{str(exc)}"
             ),
         )

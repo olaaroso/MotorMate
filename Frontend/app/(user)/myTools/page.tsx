@@ -62,7 +62,8 @@ type RentalRequest = {
     | "approved"
     | "rejected"
     | "active"
-    | "completed";
+    | "completed"
+    | "cancelled";
   created_at?: string;
 };
 
@@ -368,6 +369,111 @@ export default function MyToolsPage() {
         error instanceof Error
           ? error.message
           : "Failed to reject rental request."
+      );
+    } finally {
+      setRequestActionId(null);
+    }
+  };
+
+  // ======================================================
+  // CANCEL RENTAL
+  // ======================================================
+
+  const handleCancelRental = async (
+    request: RentalRequest
+  ) => {
+    const user = auth.currentUser;
+
+    if (!user) {
+      setErrorMsg(
+        "You must be signed in to cancel a rental."
+      );
+      return;
+    }
+
+    const isCurrent =
+      request.start_date <= today &&
+      request.end_date >= today;
+
+    const confirmed = window.confirm(
+      isCurrent
+        ? `Cancel the current rental for ${request.tool_name}? Use this if the renter did not pick up the tool or the rental needs to be ended.`
+        : `Cancel the approved rental for ${request.tool_name} from ${request.start_date} through ${request.end_date}?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setRequestActionId(request.id);
+      setErrorMsg("");
+
+      const response = await fetch(
+        `${apiUrl}/api/diy/rental-requests/${request.id}/cancel?owner_id=${encodeURIComponent(
+          user.uid
+        )}`,
+        {
+          method: "PATCH",
+        }
+      );
+
+      const data = await response
+        .json()
+        .catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail ||
+            "Failed to cancel rental."
+        );
+      }
+
+      const [requestsResponse, toolsResponse] =
+        await Promise.all([
+          fetch(
+            `${apiUrl}/api/diy/rental-requests/owner/${user.uid}`
+          ),
+          fetch(
+            `${apiUrl}/api/diy/listings/owner/${user.uid}`
+          ),
+        ]);
+
+      if (!requestsResponse.ok) {
+        throw new Error(
+          "Rental cancelled, but rental requests could not be refreshed."
+        );
+      }
+
+      if (!toolsResponse.ok) {
+        throw new Error(
+          "Rental cancelled, but your tools could not be refreshed."
+        );
+      }
+
+      const requestsData =
+        await requestsResponse.json();
+
+      const toolsData =
+        await toolsResponse.json();
+
+      setRentalRequests(
+        requestsData.results || []
+      );
+
+      setTools(
+        toolsData.results || []
+      );
+    } catch (error) {
+      console.error(
+        "Failed to cancel rental:",
+        error
+      );
+
+      setErrorMsg(
+        error instanceof Error
+          ? error.message
+          : "Failed to cancel rental."
       );
     } finally {
       setRequestActionId(null);
@@ -720,8 +826,13 @@ export default function MyToolsPage() {
   ) => {
     const mainPhoto = tool.photo_urls?.[0];
 
+    const currentRental =
+      currentRentalRequests.find(
+        (request) => request.listing_id === tool.id
+      );
+
     const isCurrentlyRented =
-      currentRentalListingIds.has(tool.id);
+      Boolean(currentRental);
 
     return (
       <article
@@ -810,6 +921,55 @@ export default function MyToolsPage() {
               </p>
             )}
           </div>
+
+          {currentRental && (
+            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+              <p className="text-sm font-bold text-[#001F3F]">
+                Current Rental
+              </p>
+
+              <div className="mt-2 space-y-1 text-xs text-gray-600">
+                <p>
+                  Renter:{" "}
+                  <span className="font-semibold text-gray-800">
+                    {currentRental.renter_name}
+                  </span>
+                </p>
+
+                <p>
+                  Dates: {currentRental.start_date}
+                  {" → "}
+                  {currentRental.end_date}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={
+                  requestActionId === currentRental.id
+                }
+                onClick={() =>
+                  handleCancelRental(currentRental)
+                }
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {requestActionId === currentRental.id ? (
+                  <>
+                    <Loader2
+                      size={15}
+                      className="animate-spin"
+                    />
+                    Cancelling...
+                  </>
+                ) : (
+                  <>
+                    <XCircle size={15} />
+                    Cancel Current Rental
+                  </>
+                )}
+              </button>
+            </div>
+          )}
 
           {!isCurrentlyRented && (
             <div className="mt-4 flex items-center justify-between rounded-xl border p-3">
@@ -1181,8 +1341,39 @@ export default function MyToolsPage() {
                           </div>
                         </div>
 
-                        <div className="rounded-xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700">
-                          Upcoming
+                        <div className="flex flex-col gap-2">
+                          <div className="rounded-xl bg-blue-50 px-4 py-3 text-center text-sm font-semibold text-blue-700">
+                            Upcoming
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={
+                              requestActionId === request.id
+                            }
+                            onClick={() =>
+                              handleCancelRental(
+                                request
+                              )
+                            }
+                            className="flex min-w-[150px] items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {requestActionId ===
+                            request.id ? (
+                              <>
+                                <Loader2
+                                  size={16}
+                                  className="animate-spin"
+                                />
+                                Cancelling...
+                              </>
+                            ) : (
+                              <>
+                                <XCircle size={16} />
+                                Cancel Rental
+                              </>
+                            )}
+                          </button>
                         </div>
                       </div>
                     </article>
