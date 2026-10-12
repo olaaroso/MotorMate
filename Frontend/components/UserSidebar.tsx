@@ -10,16 +10,46 @@ import {
   Hammer,
   LayoutDashboard,
   MapPin,
+  Package,
   Wrench,
 } from "lucide-react";
 
 const links = [
-  { name: "Dashboard", href: "/userDashboard", icon: LayoutDashboard },
-  { name: "My Garage", href: "/garage", icon: Car },
-  { name: "Maintenance", href: "/maintenance", icon: Wrench },
-  { name: "Find Mechanics", href: "/mechanics", icon: MapPin },
-  { name: "ToolDrop", href: "/tooldrop", icon: Hammer },
-  { name: "My Rentals", href: "/rentals", icon: CalendarDays },
+  {
+    name: "Dashboard",
+    href: "/userDashboard",
+    icon: LayoutDashboard,
+  },
+  {
+    name: "My Garage",
+    href: "/garage",
+    icon: Car,
+  },
+  {
+    name: "Maintenance",
+    href: "/maintenance",
+    icon: Wrench,
+  },
+  {
+    name: "Find Mechanics",
+    href: "/mechanics",
+    icon: MapPin,
+  },
+  {
+    name: "ToolDrop",
+    href: "/tooldrop",
+    icon: Hammer,
+  },
+  {
+    name: "My Tools",
+    href: "/myTools",
+    icon: Package,
+  },
+  {
+    name: "My Rentals",
+    href: "/rentals",
+    icon: CalendarDays,
+  },
 ];
 
 export default function UserSidebar() {
@@ -43,7 +73,10 @@ export default function UserSidebar() {
         </div>
 
         <div className="hidden lg:block">
-          <p className="text-lg font-bold tracking-tight">MotorMate</p>
+          <p className="text-lg font-bold tracking-tight">
+            MotorMate
+          </p>
+
           <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
             One Stop Shop
           </p>
@@ -57,10 +90,13 @@ export default function UserSidebar() {
       <nav className="mt-3 space-y-1.5 lg:mt-3">
         {links.map((link) => {
           const Icon = link.icon;
+
           const active =
             pathname === link.href ||
             (link.href !== "/userDashboard" &&
-              pathname.startsWith(`${link.href}/`));
+              pathname.startsWith(
+                `${link.href}/`
+              ));
 
           return (
             <Link
@@ -83,7 +119,9 @@ export default function UserSidebar() {
                 <Icon size={17} />
               </div>
 
-              <span className="hidden flex-1 lg:block">{link.name}</span>
+              <span className="hidden flex-1 lg:block">
+                {link.name}
+              </span>
 
               {active && (
                 <ChevronRight
@@ -100,11 +138,14 @@ export default function UserSidebar() {
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/10">
           <Wrench size={17} />
         </div>
+
         <p className="mt-4 text-sm font-semibold">
           Vehicle care, simplified.
         </p>
+
         <p className="mt-1 text-xs leading-5 text-white/50">
-          Garage, maintenance, mechanics, and tools in one place.
+          Garage, maintenance, mechanics, and tools
+          in one place.
         </p>
       </div>
     </aside>
