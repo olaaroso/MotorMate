@@ -10,6 +10,7 @@ from app.api import (
     routes_mechanic,
     routes_predict,
     routes_vin,
+    routes_service_history,
 )
 
 from app.core.database import (
@@ -102,6 +103,10 @@ app.include_router(
 
 app.include_router(
     routes_diy.router
+)
+
+app.include_router(
+    routes_service_history.router
 )
 
 

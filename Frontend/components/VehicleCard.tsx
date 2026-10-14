@@ -24,6 +24,10 @@ import {
 import { auth } from "@/lib/firebase";
 import { createCarImage } from "@/lib/carImage";
 
+import ServiceHistory, {
+  type ServiceHistorySummary,
+} from "@/components/ServiceHistory";
+
 export interface Vehicle {
   _id?: string;
   id?: string;
@@ -47,9 +51,9 @@ type VehicleTab = "Overview" | "Maintenance" | "Service History" | "Documents";
 
 interface VehicleCardProps {
   vehicle: Vehicle;
-  onVehicleUpdated?: (updatedVehicle: Vehicle) => void;
-  onVehicleRemoved?: (vehicleId: string) => void;
-  onPredictionUpdated?: (
+onVehicleUpdated?: (updatedVehicle: Vehicle) => void;
+onVehicleRemoved?: (vehicleId: string) => void;
+onPredictionUpdated?: (
     vehicleId: string,
     prediction: PredictionItem | null
   ) => void;
@@ -87,9 +91,9 @@ function normalizeVehicle(vehicle: Vehicle): Vehicle {
 
 export default function VehicleCard({
   vehicle,
-  onVehicleUpdated,
-  onVehicleRemoved,
-  onPredictionUpdated,
+onVehicleUpdated,
+onVehicleRemoved,
+onPredictionUpdated,
 }: VehicleCardProps) {
   const vehicleId = getVehicleId(vehicle);
   const isVinVehicle = Boolean(vehicle.vin);
@@ -99,13 +103,16 @@ export default function VehicleCard({
 
   const [isEditing, setIsEditing] = useState(false);
   const [mileage, setMileage] = useState(vehicle.current_mileage || 0);
+  const [displayMileage, setDisplayMileage] = useState(
+    vehicle.current_mileage || 0
+  );
   const [drivingHabits, setDrivingHabits] = useState(
     vehicle.driving_habits || "City Commute"
   );
   const [make, setMake] = useState(vehicle.make || "");
   const [model, setModel] = useState(vehicle.model || "");
   const [year, setYear] = useState(
-    Number(vehicle.year) || new Date().getFullYear()
+Number(vehicle.year) || new Date().getFullYear()
   );
   const [editLoading, setEditLoading] = useState(false);
   const [editError, setEditError] = useState("");
@@ -119,32 +126,40 @@ export default function VehicleCard({
 
   const [imageFailed, setImageFailed] = useState(false);
 
+  const [serviceSummary, setServiceSummary] =
+useState<ServiceHistorySummary>({
+      total: 0,
+      lastServiceTitle: null,
+      lastServiceDate: null,
+    });
+
+
   const handleOpenEdit = () => {
-    setMileage(Number(vehicle.current_mileage) || 0);
-    setDrivingHabits(vehicle.driving_habits || "City Commute");
-    setMake(vehicle.make || "");
-    setModel(vehicle.model || "");
-    setYear(Number(vehicle.year) || new Date().getFullYear());
-    setEditError("");
-    setMenuOpen(false);
-    setIsEditing(true);
+setMileage(Number(vehicle.current_mileage) || 0);
+setDrivingHabits(vehicle.driving_habits || "City Commute");
+setMake(vehicle.make || "");
+setModel(vehicle.model || "");
+setYear(Number(vehicle.year) || new Date().getFullYear());
+setEditError("");
+setMenuOpen(false);
+setIsEditing(true);
   };
 
-  useEffect(() => {
+useEffect(() => {
     let cancelled = false;
 
     async function loadPrediction() {
       if (!vehicleId) return;
 
-      // The current prediction route requires a VIN. Manual vehicles should
-      // stay usable without repeatedly sending requests that cannot succeed.
+// The current prediction route requires a VIN. Manual vehicles should
+// stay usable without repeatedly sending requests that cannot succeed.
       if (!vehicle.vin) {
-        setPrediction(null);
-        onPredictionUpdated?.(vehicleId, null);
+setPrediction(null);
+onPredictionUpdated?.(vehicleId, null);
         return;
       }
 
-      setPredictionLoading(true);
+setPredictionLoading(true);
 
       try {
         const response = await fetch(`${apiUrl}/api/predict/`, {
@@ -159,8 +174,8 @@ export default function VehicleCard({
 
         if (!response.ok) {
           if (!cancelled) {
-            setPrediction(null);
-            onPredictionUpdated?.(vehicleId, null);
+setPrediction(null);
+onPredictionUpdated?.(vehicleId, null);
           }
           return;
         }
@@ -170,24 +185,24 @@ export default function VehicleCard({
           data.upcoming_repairs?.[0] || null;
 
         if (!cancelled) {
-          setPrediction(nextPrediction);
-          onPredictionUpdated?.(vehicleId, nextPrediction);
+setPrediction(nextPrediction);
+onPredictionUpdated?.(vehicleId, nextPrediction);
         }
       } catch (error) {
         console.warn("Prediction fetch error in VehicleCard:", error);
 
         if (!cancelled) {
-          setPrediction(null);
-          onPredictionUpdated?.(vehicleId, null);
+setPrediction(null);
+onPredictionUpdated?.(vehicleId, null);
         }
       } finally {
         if (!cancelled) {
-          setPredictionLoading(false);
+setPredictionLoading(false);
         }
       }
     }
 
-    loadPrediction();
+loadPrediction();
 
     return () => {
       cancelled = true;
@@ -197,43 +212,43 @@ export default function VehicleCard({
     vehicle.vin,
     vehicle.current_mileage,
     vehicle.driving_habits,
-    onPredictionUpdated,
+onPredictionUpdated,
   ]);
 
   const handleUpdate = async (event: FormEvent) => {
     event.preventDefault();
 
     if (!vehicleId) {
-      setEditError("This vehicle is missing its database ID.");
+setEditError("This vehicle is missing its database ID.");
       return;
     }
 
     const currentUserId = vehicle.owner_id || auth.currentUser?.uid;
 
     if (!currentUserId) {
-      setEditError("You must be signed in to update this vehicle.");
+setEditError("You must be signed in to update this vehicle.");
       return;
     }
 
     if (mileage < 0) {
-      setEditError("Mileage cannot be negative.");
+setEditError("Mileage cannot be negative.");
       return;
     }
 
     if (!isVinVehicle) {
       if (!make.trim() || !model.trim()) {
-        setEditError("Make and model are required.");
+setEditError("Make and model are required.");
         return;
       }
 
       if (year < 1900 || year > 2100) {
-        setEditError("Please enter a valid model year.");
+setEditError("Please enter a valid model year.");
         return;
       }
     }
 
-    setEditLoading(true);
-    setEditError("");
+setEditLoading(true);
+setEditError("");
 
     const payload: Record<string, string | number> = {
       owner_id: currentUserId,
@@ -241,7 +256,7 @@ export default function VehicleCard({
       driving_habits: drivingHabits,
     };
 
-    // VIN-decoded identity comes from NHTSA, so keep those fields authoritative.
+// VIN-decoded identity comes from NHTSA, so keep those fields authoritative.
     if (!isVinVehicle) {
       payload.make = make.trim();
       payload.model = model.trim();
@@ -279,32 +294,33 @@ export default function VehicleCard({
         }
       );
 
-      onVehicleUpdated?.(updatedVehicle);
-      setIsEditing(false);
+onVehicleUpdated?.(updatedVehicle);
+setDisplayMileage(updatedVehicle.current_mileage || 0);
+setIsEditing(false);
     } catch (error) {
-      setEditError(
+setEditError(
         error instanceof Error ? error.message : "Failed to update vehicle."
       );
     } finally {
-      setEditLoading(false);
+setEditLoading(false);
     }
   };
 
   const handleRemove = async () => {
     if (!vehicleId) {
-      setDeleteError("This vehicle is missing its database ID.");
+setDeleteError("This vehicle is missing its database ID.");
       return;
     }
 
     const currentUserId = vehicle.owner_id || auth.currentUser?.uid;
 
     if (!currentUserId) {
-      setDeleteError("You must be signed in to remove this vehicle.");
+setDeleteError("You must be signed in to remove this vehicle.");
       return;
     }
 
-    setDeleteLoading(true);
-    setDeleteError("");
+setDeleteLoading(true);
+setDeleteError("");
 
     try {
       const response = await fetch(
@@ -319,14 +335,14 @@ export default function VehicleCard({
         throw new Error(errorData.detail || "Failed to remove vehicle.");
       }
 
-      onVehicleRemoved?.(vehicleId);
-      setDeleteOpen(false);
+onVehicleRemoved?.(vehicleId);
+setDeleteOpen(false);
     } catch (error) {
-      setDeleteError(
+setDeleteError(
         error instanceof Error ? error.message : "Failed to remove vehicle."
       );
     } finally {
-      setDeleteLoading(false);
+setDeleteLoading(false);
     }
   };
 
@@ -355,7 +371,7 @@ export default function VehicleCard({
   const vehicleName = `${vehicle.year} ${vehicle.make} ${vehicle.model}`;
 
   return (
-    <section className="group overflow-visible rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg">
+    <section className="group overflow-visible rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-shadow duration-300 hover:shadow-lg">
       <div className="p-5 sm:p-6">
         <div className="flex flex-col gap-6 lg:flex-row">
           <div className="flex h-44 w-full shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-slate-200 bg-linear-to-br from-slate-50 to-slate-100 lg:w-64">
@@ -363,14 +379,14 @@ export default function VehicleCard({
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src={createCarImage(
+src={createCarImage(
                     vehicle.make,
                     vehicle.model,
-                    String(vehicle.year)
+String(vehicle.year)
                   )}
-                  alt={vehicleName}
-                  onError={() => setImageFailed(true)}
-                  className="h-full w-full object-contain p-3 transition-transform duration-300 group-hover:scale-[1.03]"
+alt={vehicleName}
+onError={() => setImageFailed(true)}
+className="h-full w-full object-contain p-3 transition-transform duration-300 group-hover:scale-[1.03]"
                 />
               </>
             ) : (
@@ -400,7 +416,7 @@ export default function VehicleCard({
 
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-600">
-                    {(vehicle.current_mileage ?? 0).toLocaleString()} miles
+                    {displayMileage.toLocaleString()} miles
                   </span>
 
                   <span className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-sm font-medium text-[#001F3F]">
@@ -411,9 +427,9 @@ export default function VehicleCard({
 
               <div className="flex shrink-0 items-center gap-2">
                 <button
-                  type="button"
-                  onClick={handleOpenEdit}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+type="button"
+onClick={handleOpenEdit}
+className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                 >
                   <Edit3 size={15} />
                   Edit
@@ -421,10 +437,10 @@ export default function VehicleCard({
 
                 <div className="relative">
                   <button
-                    type="button"
-                    onClick={() => setMenuOpen((previous) => !previous)}
-                    aria-label="More vehicle options"
-                    className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
+type="button"
+onClick={() => setMenuOpen((previous) => !previous)}
+aria-label="More vehicle options"
+className="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-50 hover:text-slate-800"
                   >
                     <MoreHorizontal size={18} />
                   </button>
@@ -432,13 +448,13 @@ export default function VehicleCard({
                   {menuOpen && (
                     <div className="absolute right-0 top-11 z-30 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
                       <button
-                        type="button"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          setDeleteError("");
-                          setDeleteOpen(true);
+type="button"
+onClick={() => {
+setMenuOpen(false);
+setDeleteError("");
+setDeleteOpen(true);
                         }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50"
+className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-red-600 transition hover:bg-red-50"
                       >
                         <Trash2 size={15} />
                         Remove Vehicle
@@ -454,8 +470,8 @@ export default function VehicleCard({
               <VehicleDetailBadge label="Model" value={vehicle.model} />
               <VehicleDetailBadge label="Year" value={String(vehicle.year)} />
               <VehicleDetailBadge
-                label="Source"
-                value={vehicle.vin ? "VIN / NHTSA" : "Manual"}
+label="Source"
+value={vehicle.vin ? "VIN / NHTSA" : "Manual"}
               />
             </div>
           </div>
@@ -466,10 +482,10 @@ export default function VehicleCard({
             ["Overview", "Maintenance", "Service History", "Documents"] as const
           ).map((tab) => (
             <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={`whitespace-nowrap px-4 py-3 text-sm transition ${
+key={tab}
+type="button"
+onClick={() => setActiveTab(tab)}
+className={`whitespace-nowrap px-4 py-3 text-sm transition ${
                 activeTab === tab
                   ? "border-b-2 border-[#001F3F] font-semibold text-[#001F3F]"
                   : "font-medium text-slate-500 hover:text-slate-900"
@@ -488,7 +504,7 @@ export default function VehicleCard({
                   <p className="font-semibold text-slate-900">
                     {predictionLoading
                       ? "Forecasting..."
-                      : prediction?.part || "Inspection Required"}
+                      : prediction?.part || "N/A"}
                   </p>
 
                   {predictionLoading ? (
@@ -500,7 +516,7 @@ export default function VehicleCard({
                     <>
                       <div className="mt-2 flex items-center justify-between gap-3">
                         <span
-                          className={`text-xs font-semibold ${predictionTextColor}`}
+className={`text-xs font-semibold ${predictionTextColor}`}
                         >
                           {likelihood}% likelihood
                         </span>
@@ -511,8 +527,8 @@ export default function VehicleCard({
 
                       <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ${predictionColor}`}
-                          style={{ width: `${likelihood}%` }}
+className={`h-full rounded-full transition-all duration-500 ${predictionColor}`}
+style={{ width: `${likelihood}%` }}
                         />
                       </div>
                     </>
@@ -526,17 +542,34 @@ export default function VehicleCard({
                 </div>
               </GarageInfoCard>
 
-              <GarageInfoCard title="Last Service" icon={CalendarDays}>
+              <GarageInfoCard
+title="Last Service"
+icon={CalendarDays}
+              >
                 <p className="font-semibold text-slate-900">
-                  No service recorded
+                  {serviceSummary.lastServiceTitle ||
+                    "No service recorded"}
                 </p>
-                <p className="mt-1 text-sm text-slate-500">N/A</p>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  {formatServiceDate(
+                    serviceSummary.lastServiceDate
+                  )}
+                </p>
               </GarageInfoCard>
 
-              <GarageInfoCard title="Service Records" icon={FileText}>
+              <GarageInfoCard
+title="Service Records"
+icon={FileText}
+              >
                 <div className="flex items-end gap-2">
-                  <p className="text-3xl font-bold text-slate-900">0</p>
-                  <span className="mb-1 text-xs text-slate-400">total</span>
+                  <p className="text-3xl font-bold text-slate-900">
+                    {serviceSummary.total}
+                  </p>
+
+                  <span className="mb-1 text-xs text-slate-400">
+                    total
+                  </span>
                 </div>
               </GarageInfoCard>
 
@@ -578,7 +611,7 @@ export default function VehicleCard({
                     </div>
 
                     <span
-                      className={`rounded-full bg-white px-3 py-1.5 text-sm font-semibold shadow-sm ${predictionTextColor}`}
+className={`rounded-full bg-white px-3 py-1.5 text-sm font-semibold shadow-sm ${predictionTextColor}`}
                     >
                       {likelihood}% likelihood
                     </span>
@@ -586,8 +619,8 @@ export default function VehicleCard({
 
                   <div className="mt-5 h-2.5 overflow-hidden rounded-full bg-slate-200">
                     <div
-                      className={`h-full rounded-full ${predictionColor}`}
-                      style={{ width: `${likelihood}%` }}
+className={`h-full rounded-full ${predictionColor}`}
+style={{ width: `${likelihood}%` }}
                     />
                   </div>
                 </div>
@@ -606,17 +639,30 @@ export default function VehicleCard({
             </div>
           )}
 
-          {activeTab === "Service History" && (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-6 text-center">
-              <FileText size={24} className="mx-auto text-slate-300" />
-              <p className="mt-3 font-medium text-slate-800">
-                No service records yet
-              </p>
-              <p className="mt-1 text-sm text-slate-500">
-                Logged maintenance and repairs can appear here later.
-              </p>
-            </div>
-          )}
+          <ServiceHistory
+isActive={
+              activeTab === "Service History"
+            }
+vehicleId={vehicleId}
+ownerId={
+              vehicle.owner_id ||
+              auth.currentUser?.uid
+            }
+vehicleName={vehicleName}
+currentMileage={
+              displayMileage
+            }
+onSummaryChange={
+setServiceSummary
+            }
+onMileageUpdated={(newMileage) => {
+              setDisplayMileage(newMileage);
+              onVehicleUpdated?.({
+                ...vehicle,
+                current_mileage: newMileage,
+              });
+            }}
+          />
 
           {activeTab === "Documents" && (
             <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-6 text-center">
@@ -646,10 +692,10 @@ export default function VehicleCard({
               </div>
 
               <button
-                type="button"
-                onClick={() => setIsEditing(false)}
-                className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                aria-label="Close edit vehicle"
+type="button"
+onClick={() => setIsEditing(false)}
+className="rounded-lg p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+aria-label="Close edit vehicle"
               >
                 <X size={19} />
               </button>
@@ -676,13 +722,13 @@ export default function VehicleCard({
                         Make
                       </label>
                       <input
-                        type="text"
-                        value={make}
-                        onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                          setMake(event.target.value)
+type="text"
+value={make}
+onChange={(event: ChangeEvent<HTMLInputElement>) =>
+setMake(event.target.value)
                         }
-                        className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
-                        required
+className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
+required
                       />
                     </div>
 
@@ -691,13 +737,13 @@ export default function VehicleCard({
                         Model
                       </label>
                       <input
-                        type="text"
-                        value={model}
-                        onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                          setModel(event.target.value)
+type="text"
+value={model}
+onChange={(event: ChangeEvent<HTMLInputElement>) =>
+setModel(event.target.value)
                         }
-                        className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
-                        required
+className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
+required
                       />
                     </div>
                   </div>
@@ -707,15 +753,15 @@ export default function VehicleCard({
                       Model Year
                     </label>
                     <input
-                      type="number"
-                      min={1900}
-                      max={2100}
-                      value={year}
-                      onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                        setYear(Number(event.target.value))
+type="number"
+min={1900}
+max={2100}
+value={year}
+onChange={(event: ChangeEvent<HTMLInputElement>) =>
+setYear(Number(event.target.value))
                       }
-                      className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
-                      required
+className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
+required
                     />
                   </div>
                 </>
@@ -726,14 +772,14 @@ export default function VehicleCard({
                   Current Mileage (Miles)
                 </label>
                 <input
-                  type="number"
-                  min={0}
-                  value={mileage}
-                  onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                    setMileage(Number(event.target.value))
+type="number"
+min={0}
+value={mileage}
+onChange={(event: ChangeEvent<HTMLInputElement>) =>
+setMileage(Number(event.target.value))
                   }
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
-                  required
+className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
+required
                 />
               </div>
 
@@ -742,11 +788,11 @@ export default function VehicleCard({
                   Driving Habits
                 </label>
                 <select
-                  value={drivingHabits}
-                  onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                    setDrivingHabits(event.target.value)
+value={drivingHabits}
+onChange={(event: ChangeEvent<HTMLSelectElement>) =>
+setDrivingHabits(event.target.value)
                   }
-                  className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
+className="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#001F3F] focus:ring-2 focus:ring-[#001F3F]/10"
                 >
                   {DRIVING_HABITS.map((habit) => (
                     <option key={habit.value} value={habit.value}>
@@ -764,18 +810,18 @@ export default function VehicleCard({
 
               <div className="flex justify-end gap-3 border-t border-slate-100 pt-4">
                 <button
-                  type="button"
-                  disabled={editLoading}
-                  onClick={() => setIsEditing(false)}
-                  className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+type="button"
+disabled={editLoading}
+onClick={() => setIsEditing(false)}
+className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
                 >
                   Cancel
                 </button>
 
                 <button
-                  type="submit"
-                  disabled={editLoading}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366] disabled:opacity-50"
+type="submit"
+disabled={editLoading}
+className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366] disabled:opacity-50"
                 >
                   {editLoading && <Loader2 size={15} className="animate-spin" />}
                   {editLoading ? "Saving..." : "Save Changes"}
@@ -808,19 +854,19 @@ export default function VehicleCard({
 
             <div className="mt-6 flex justify-end gap-3">
               <button
-                type="button"
-                disabled={deleteLoading}
-                onClick={() => setDeleteOpen(false)}
-                className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
+type="button"
+disabled={deleteLoading}
+onClick={() => setDeleteOpen(false)}
+className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
               >
                 Cancel
               </button>
 
               <button
-                type="button"
-                disabled={deleteLoading}
-                onClick={handleRemove}
-                className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
+type="button"
+disabled={deleteLoading}
+onClick={handleRemove}
+className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
               >
                 {deleteLoading && <Loader2 size={15} className="animate-spin" />}
                 {deleteLoading ? "Removing..." : "Remove Vehicle"}
@@ -856,7 +902,7 @@ function GarageInfoCard({
   children,
 }: {
   title: string;
-  icon: ElementType;
+icon: ElementType;
   children: ReactNode;
 }) {
   return (
@@ -872,4 +918,18 @@ function GarageInfoCard({
       <div className="mt-4">{children}</div>
     </div>
   );
+}
+
+function formatServiceDate(
+  value: string | null
+) {
+  if (!value) return "N/A";
+
+  return new Date(
+    `${value}T00:00:00`
+  ).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
