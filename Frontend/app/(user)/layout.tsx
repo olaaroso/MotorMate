@@ -13,7 +13,7 @@ export default function UserLayout({
       <UserSidebar />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-18 items-center justify-end border-b border-white/10 bg-[#001F3F] px-5 sm:px-8">
+          <header className="sticky top-0 z-50 flex h-20 w-full shrink-0 items-center justify-end border-b border-white/10 bg-[#001F3F] px-6 sm:px-10">
             <NotificationBell/>
 
           <div className="h-6 w-px bg-white/20" />

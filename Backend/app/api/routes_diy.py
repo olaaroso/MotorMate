@@ -1780,17 +1780,23 @@ async def create_rental_request(
         )
 
 
+        tool_name = listing.get("item_name", "Tool")
+
+        notification_doc = {
+            "user_id": owner_id,
+            "title": "New Rental Request!",
+            "message": f"{renter_name} wants to rent your {tool_name}.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+        # ---------------------------------------------------------
 
         return {
-
             "message":
-
                 "Rental request submitted successfully.",
-
             "request":
-
                 request_document,
-
         }
 
 
