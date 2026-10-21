@@ -2286,13 +2286,21 @@ async def approve_rental_request(
             )
         )
 
+        renter_id = updated_request.get("renter_id")
+        tool_name = updated_request.get("tool_name", "Tool")
+
+        notification_doc = {
+            "user_id": renter_id,
+            "title": "Rental Approved! 🎉",
+            "message": f"Your rental reservation for the {tool_name} has been approved by the owner.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+
         return {
-            "message":
-                "Rental request approved successfully.",
-            "request":
-                serialize_mongo_document(
-                    updated_request
-                ),
+            "message": "Rental request approved successfully.",
+            "request": serialize_mongo_document(updated_request),
         }
 
     except HTTPException:
@@ -2425,13 +2433,26 @@ async def cancel_rental(
             )
         )
 
+        # ---------------------------------------------------------
+        # 2. ADD THIS NEW NOTIFICATION LOGIC
+        # ---------------------------------------------------------
+        renter_id = updated_request.get("renter_id")
+        tool_name = updated_request.get("tool_name", "Tool")
+
+        new_notification = Notification(
+            id=str(uuid.uuid4()),
+            user_id=renter_id,
+            title="Rental Declined",
+            message=f"Unfortunately, your upcoming rental for the {tool_name} was cancelled by the owner.",
+            is_read=False
+        )
+        db.add(new_notification)
+        db.commit()
+        # ---------------------------------------------------------
+
         return {
-            "message":
-                "Rental cancelled successfully.",
-            "request":
-                serialize_mongo_document(
-                    updated_request
-                ),
+            "message": "Rental cancelled successfully.",
+            "request": serialize_mongo_document(updated_request),
         }
 
     except HTTPException:
@@ -2529,13 +2550,21 @@ async def reject_rental_request(
             )
         )
 
+        renter_id = updated_request.get("renter_id")
+        tool_name = updated_request.get("tool_name", "Tool")
+
+        notification_doc = {
+            "user_id": renter_id,
+            "title": "Rental Declined",
+            "message": f"Unfortunately, your rental request for the {tool_name} was declined by the owner.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+
         return {
-            "message":
-                "Rental request rejected successfully.",
-            "request":
-                serialize_mongo_document(
-                    updated_request
-                ),
+            "message": "Rental request rejected successfully.",
+            "request": serialize_mongo_document(updated_request),
         }
 
     except HTTPException:
