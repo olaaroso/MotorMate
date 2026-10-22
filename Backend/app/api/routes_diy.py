@@ -82,13 +82,15 @@ class DIYListingCreate(BaseModel):
 
 
 
-    distance: float = Field(default=2.5, ge=0.0)
+    distance: float = Field(default=5.0, ge=0.0)
 
 
 
     rating: float = 4.9
 
     reviews: int = 0
+
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 
@@ -212,7 +214,10 @@ DEFAULT_SEED_LISTINGS = [
 
         "specifications": "3-ton capacity",
 
-        "photo_urls": [],
+        "photo_urls": [
+            "https://res.cloudinary.com/omki7dtk/image/upload/v1792680358/wzfgnjzcktsvhhj0x4xa.avif"
+        ],
+        "created_at": "2020-01-01T00:00:00+00:00",
 
     },
 
@@ -254,7 +259,10 @@ DEFAULT_SEED_LISTINGS = [
 
         "specifications": "1/2-inch drive",
 
-        "photo_urls": [],
+        "photo_urls": [
+            "https://res.cloudinary.com/omki7dtk/image/upload/v1792680264/xv2b67cpdkdoppvvfzlu.jpg"
+        ],
+        "created_at": "2020-01-02T00:00:00+00:00",
 
     },
 
@@ -296,8 +304,10 @@ DEFAULT_SEED_LISTINGS = [
 
         "specifications": "Works with OBD-II vehicles",
 
-        "photo_urls": [],
-
+        "photo_urls": [
+            "https://res.cloudinary.com/omki7dtk/image/upload/v1792680100/j2edqyuaypssvgfjtmqe.jpg"
+        ],
+        "created_at": "2020-01-03T00:00:00+00:00",
     },
 
 ]
@@ -480,51 +490,21 @@ async def list_listings(
 
 
 
-        allowed_sort_fields = {
+        sort_key = sort_by.lower()
 
-            "price": "price",
+        if sort_key == "featured":
+            field = "created_at"
+            sort_direction = -1
+        else:
+            allowed_sort_fields = {
+                "price": "price",
+                "distance": "distance",
+                "rating": "rating",
+            }
+            field = allowed_sort_fields.get(sort_key, "distance")
+            sort_direction = 1 if order.lower() == "asc" else -1
 
-            "distance": "distance",
-
-            "rating": "rating",
-
-        }
-
-
-
-        field = allowed_sort_fields.get(
-
-            sort_by,
-
-            "distance",
-
-        )
-
-
-
-        sort_direction = (
-
-            1
-
-            if order == "asc"
-
-            else -1
-
-        )
-
-
-
-        cursor = tools_collection.find(
-
-            filter_query
-
-        ).sort(
-
-            field,
-
-            sort_direction,
-
-        )
+        cursor = tools_collection.find(filter_query).sort(field, sort_direction)
 
 
 
@@ -1780,17 +1760,23 @@ async def create_rental_request(
         )
 
 
+        tool_name = listing.get("item_name", "Tool")
+
+        notification_doc = {
+            "user_id": owner_id,
+            "title": "New Rental Request!",
+            "message": f"{renter_name} wants to rent your {tool_name}.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+        # ---------------------------------------------------------
 
         return {
-
             "message":
-
                 "Rental request submitted successfully.",
-
             "request":
-
                 request_document,
-
         }
 
 
@@ -2286,13 +2272,21 @@ async def approve_rental_request(
             )
         )
 
+        renter_id = updated_request.get("renter_id")
+        tool_name = updated_request.get("tool_name", "Tool")
+
+        notification_doc = {
+            "user_id": renter_id,
+            "title": "Rental Approved! 🎉",
+            "message": f"Your rental reservation for the {tool_name} has been approved by the owner.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+
         return {
-            "message":
-                "Rental request approved successfully.",
-            "request":
-                serialize_mongo_document(
-                    updated_request
-                ),
+            "message": "Rental request approved successfully.",
+            "request": serialize_mongo_document(updated_request),
         }
 
     except HTTPException:
@@ -2425,13 +2419,25 @@ async def cancel_rental(
             )
         )
 
+        # ---------------------------------------------------------
+        # 2. ADD THIS NEW NOTIFICATION LOGIC
+        # ---------------------------------------------------------
+        renter_id = updated_request.get("renter_id")
+        tool_name = updated_request.get("tool_name", "Tool")
+
+        notification_doc = {
+            "user_id": renter_id,
+            "title": "Rental Cancelled",
+            "message": f"Unfortunately, your upcoming rental for the {tool_name} was cancelled by the owner.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+        # ---------------------------------------------------------
+
         return {
-            "message":
-                "Rental cancelled successfully.",
-            "request":
-                serialize_mongo_document(
-                    updated_request
-                ),
+            "message": "Rental cancelled successfully.",
+            "request": serialize_mongo_document(updated_request),
         }
 
     except HTTPException:
@@ -2529,13 +2535,21 @@ async def reject_rental_request(
             )
         )
 
+        renter_id = updated_request.get("renter_id")
+        tool_name = updated_request.get("tool_name", "Tool")
+
+        notification_doc = {
+            "user_id": renter_id,
+            "title": "Rental Declined",
+            "message": f"Unfortunately, your rental request for the {tool_name} was declined by the owner.",
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db_instance.db["notifications"].insert_one(notification_doc)
+
         return {
-            "message":
-                "Rental request rejected successfully.",
-            "request":
-                serialize_mongo_document(
-                    updated_request
-                ),
+            "message": "Rental request rejected successfully.",
+            "request": serialize_mongo_document(updated_request),
         }
 
     except HTTPException:

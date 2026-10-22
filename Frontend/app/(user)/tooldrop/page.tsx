@@ -333,7 +333,7 @@ export default function ToolDropPage() {
                     </p>
 
                     <p className="mt-1 text-xs text-gray-400">
-                      {isSelected ? "Filter active (Click to reset)" : "Browse available tools"}
+                      {isSelected ? "" : ""}
                     </p>
                   </button>
               );
