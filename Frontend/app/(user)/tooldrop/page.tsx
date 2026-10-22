@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { auth } from "@/lib/firebase";
 import {
   Search,
   MapPin,
@@ -111,6 +112,8 @@ export default function ToolDropPage() {
   const fetchTools = useCallback(async () => {
     setLoading(true);
     try {
+      const currentUserId = auth.currentUser?.uid || "";
+
       const params = new URLSearchParams({
         sort_by: currentSort.field,
         order: currentSort.order,
@@ -121,6 +124,9 @@ export default function ToolDropPage() {
       }
       if (appliedSearch.trim()) {
         params.append("search", appliedSearch.trim());
+      }
+      if (currentUserId) {
+        params.append("exclude_owner_id", currentUserId);
       }
 
       const res = await fetch(`${apiUrl}/api/diy/listings?${params.toString()}`);
