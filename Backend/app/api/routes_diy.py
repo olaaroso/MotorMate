@@ -215,7 +215,7 @@ DEFAULT_SEED_LISTINGS = [
         "specifications": "3-ton capacity",
 
         "photo_urls": [
-            "https://res.cloudinary.com/dtz0urit6/image/upload/q_auto:best,f_jpg/cloudinary-tools-uploads/etm8bntd3fqv7akdykmh"
+            "https://res.cloudinary.com/omki7dtk/image/upload/v1792680358/wzfgnjzcktsvhhj0x4xa.avif"
         ],
         "created_at": "2020-01-01T00:00:00+00:00",
 
@@ -260,7 +260,7 @@ DEFAULT_SEED_LISTINGS = [
         "specifications": "1/2-inch drive",
 
         "photo_urls": [
-            "https://res.cloudinary.com/dtz0urit6/image/upload/q_auto:best,f_jpg/cloudinary-tools-uploads/fzc8ifkvmsq0x9d4rgp8"
+            "https://res.cloudinary.com/omki7dtk/image/upload/v1792680264/xv2b67cpdkdoppvvfzlu.jpg"
         ],
         "created_at": "2020-01-02T00:00:00+00:00",
 
@@ -305,7 +305,7 @@ DEFAULT_SEED_LISTINGS = [
         "specifications": "Works with OBD-II vehicles",
 
         "photo_urls": [
-            "https://res.cloudinary.com/dtz0urit6/image/upload/q_auto:best,f_jpg/cloudinary-tools-uploads/wuoher64pwdjni1hbmel"
+            "https://res.cloudinary.com/omki7dtk/image/upload/v1792680100/j2edqyuaypssvgfjtmqe.jpg"
         ],
         "created_at": "2020-01-03T00:00:00+00:00",
     },
