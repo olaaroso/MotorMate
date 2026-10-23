@@ -16,7 +16,8 @@ import {
   User,
 } from "lucide-react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
 export default function UserMenu() {
   const [open, setOpen] = useState(false);
@@ -24,24 +25,48 @@ export default function UserMenu() {
   const [email, setEmail] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    let unsubscribeSnapshot: (() => void) | undefined;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (!user) {
         setName("MotorMate User");
         setEmail("");
+        if (unsubscribeSnapshot) unsubscribeSnapshot();
         return;
       }
 
       setName(
-        user.displayName?.trim() ||
+          user.displayName?.trim() ||
           user.email?.split("@")[0] ||
           "MotorMate User"
       );
       setEmail(user.email || "");
+
+      const userRef = doc(db, "users", user.uid);
+
+      unsubscribeSnapshot = onSnapshot(userRef, (userSnapshot) => {
+        if (userSnapshot.exists()) {
+          const data = userSnapshot.data();
+          const fName = data.firstName || "";
+          const lName = data.lastName || "";
+          const fullName = `${fName} ${lName}`.trim();
+
+          if (fullName) {
+            setName(fullName);
+          }
+        }
+      }, (error) => {
+        console.error("Failed to listen to user data:", error);
+      });
     });
 
-    return unsubscribe;
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeSnapshot) unsubscribeSnapshot();
+    };
   }, []);
 
   const initials = useMemo(() => {

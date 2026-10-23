@@ -8,6 +8,8 @@ import {
   Phone,
   Save,
   User,
+  Plus,
+  Loader2
 } from "lucide-react";
 
 import { onAuthStateChanged } from "firebase/auth";
@@ -18,6 +20,9 @@ import { auth, db } from "@/lib/firebase";
 export default function AccountSettingsPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+
+  const [profileImage, setProfileImage] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
@@ -52,6 +57,7 @@ export default function AccountSettingsPage() {
           setPhone(data.phone || "");
           setFirstName(data.firstName || "");
           setLastName(data.lastName || "");
+          setProfileImage(data.profileImage || "");
           setCity(data.city || "");
           setState(data.state || "");
           setZipCode(data.zipCode || "");
@@ -89,6 +95,7 @@ export default function AccountSettingsPage() {
           phone,
           firstName,
           lastName,
+          profileImage,
           city,
           state,
           zipCode,
@@ -108,6 +115,40 @@ export default function AccountSettingsPage() {
       setError("Something went wrong while saving your profile.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setUploadingImage(true);
+      setError("");
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("upload_preset", "motormate_tools");
+
+      const res = await fetch(
+          "https://api.cloudinary.com/v1_1/omki7dtk/image/upload",
+          {
+            method: "POST",
+            body: formData,
+          }
+      );
+
+      const data = await res.json();
+      if (data.secure_url) {
+        setProfileImage(data.secure_url);
+      } else {
+        throw new Error("Upload failed");
+      }
+    } catch (err) {
+      console.error("Image upload error:", err);
+      setError("Failed to upload profile picture.");
+    } finally {
+      setUploadingImage(false);
     }
   };
 
@@ -162,15 +203,42 @@ export default function AccountSettingsPage() {
 
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex items-center gap-5">
-            <div className="flex h-20 w-20 items-center justify-center rounded-full bg-[#001F3F] text-xl font-bold text-white">
-              {initials}
+
+            <div className="group relative flex h-20 w-20 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[#001F3F] text-xl font-bold text-white shadow-sm">
+              {profileImage ? (
+
+                  <img
+                      src={profileImage}
+                      alt="Profile"
+                      className="h-full w-full object-cover"
+                  />
+              ) : (
+                  <span>{initials}</span>
+              )}
+
+              {/* HOVER OVERLAY */}
+              <label className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/50 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                {uploadingImage ? (
+                    <Loader2 size={24} className="animate-spin text-white" />
+                ) : (
+                    <Plus size={28} className="text-white" />
+                )}
+
+                <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleImageUpload}
+                    disabled={uploadingImage}
+                />
+              </label>
             </div>
 
             <div>
               <h2 className="text-xl font-bold text-[#001F3F]">
                 {firstName || lastName
-                  ? `${firstName} ${lastName}`.trim()
-                  : "Your Profile"}
+                    ? `${firstName} ${lastName}`.trim()
+                    : "Your Profile"}
               </h2>
 
               <p className="mt-1 text-sm text-gray-500">
