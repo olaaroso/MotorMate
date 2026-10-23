@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -6,7 +6,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 
-os.makedirs("Backend/app/ml_pipeline/models", exist_ok=True)
+MODEL_DIR = Path(__file__).resolve().parent / "models"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class MaintenancePredictor(nn.Module):
@@ -26,28 +27,37 @@ class MaintenancePredictor(nn.Module):
         return self.network(x)
 
 
-def generate_synthetic_data(num_samples=5000):
-    """Generate a basic tabular dataset for model training."""
+def generate_synthetic_data(num_samples=20000, seed=42):
+    """Generate repeatable maintenance examples across mileage and usage."""
     print(f"Generating {num_samples} synthetic vehicle records...")
 
-    years = np.random.randint(2005, 2026, size=(num_samples, 1))
+    rng = np.random.default_rng(seed)
+    years = rng.integers(2005, 2026, size=(num_samples, 1))
     normalized_years = (years - 2000) / 30.0
 
-    mileages = np.random.randint(10000, 200000, size=(num_samples, 1))
+    mileages = rng.integers(10000, 250001, size=(num_samples, 1))
     normalized_mileages = mileages / 250000.0
+    usage_severity = rng.uniform(0.0, 1.0, size=(num_samples, 1))
 
-    X = np.hstack((normalized_years, normalized_mileages))
+    X = np.hstack((normalized_years, normalized_mileages, usage_severity))
 
-    needs_brakes = ((mileages > 50000) & (np.random.rand(num_samples, 1) > 0.3)).astype(float)
-    needs_timing_belt = ((mileages > 100000) & (np.random.rand(num_samples, 1) > 0.2)).astype(float)
-    needs_battery = ((years < 2018) & (np.random.rand(num_samples, 1) > 0.4)).astype(float)
+    brake_threshold = 65000 - usage_severity * 25000
+    timing_threshold = 125000 - usage_severity * 20000
+    vehicle_age = 2026 - years
+    brake_probability = 1 / (1 + np.exp(-(mileages - brake_threshold) / 14000))
+    timing_probability = 1 / (1 + np.exp(-(mileages - timing_threshold) / 18000))
+    battery_probability = 1 / (1 + np.exp(-(vehicle_age - 6 + usage_severity * 2) / 1.8))
+
+    needs_brakes = (rng.random((num_samples, 1)) < brake_probability).astype(float)
+    needs_timing_belt = (rng.random((num_samples, 1)) < timing_probability).astype(float)
+    needs_battery = (rng.random((num_samples, 1)) < battery_probability).astype(float)
 
     y = np.hstack((needs_brakes, needs_timing_belt, needs_battery))
     return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
 
 
-def train_model():
-    INPUT_DIM = 2
+def train_model(num_samples=20000):
+    INPUT_DIM = 3
     HIDDEN_DIM = 64
     OUTPUT_DIM = 3
     EPOCHS = 50
@@ -58,9 +68,18 @@ def train_model():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
 
-    X, y = generate_synthetic_data()
+    torch.manual_seed(42)
+    X, y = generate_synthetic_data(num_samples=num_samples)
     dataset = TensorDataset(X, y)
-    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    training_size = int(len(dataset) * 0.8)
+    validation_size = len(dataset) - training_size
+    training_data, validation_data = torch.utils.data.random_split(
+        dataset,
+        [training_size, validation_size],
+        generator=torch.Generator().manual_seed(42),
+    )
+    training_loader = DataLoader(training_data, batch_size=BATCH_SIZE, shuffle=True)
+    validation_loader = DataLoader(validation_data, batch_size=BATCH_SIZE)
 
     model = MaintenancePredictor(INPUT_DIM, HIDDEN_DIM, OUTPUT_DIM).to(device)
     criterion = nn.BCEWithLogitsLoss()
@@ -74,7 +93,7 @@ def train_model():
         model.train()
         epoch_loss = 0.0
 
-        for batch_X, batch_y in dataloader:
+        for batch_X, batch_y in training_loader:
             batch_X, batch_y = batch_X.to(device), batch_y.to(device)
             optimizer.zero_grad()
             predictions = model(batch_X)
@@ -83,11 +102,18 @@ def train_model():
             optimizer.step()
             epoch_loss += loss.item()
 
-        avg_loss = epoch_loss / len(dataloader)
-        if avg_loss < best_loss:
-            best_loss = avg_loss
+        model.eval()
+        validation_loss = 0.0
+        with torch.no_grad():
+            for batch_X, batch_y in validation_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                validation_loss += criterion(model(batch_X), batch_y).item()
+
+        avg_validation_loss = validation_loss / len(validation_loader)
+        if avg_validation_loss < best_loss:
+            best_loss = avg_validation_loss
             stale_epochs = 0
-            checkpoint_path = "Backend/app/ml_pipeline/models/repair_predictor_v1.pth"
+            checkpoint_path = MODEL_DIR / "repair_predictor_v2.pth"
             torch.save(model.state_dict(), checkpoint_path)
         else:
             stale_epochs += 1
@@ -96,7 +122,10 @@ def train_model():
                 break
 
         if (epoch + 1) % 10 == 0:
-            print(f"Epoch {epoch + 1}/{EPOCHS} | Loss: {avg_loss:.4f}")
+            print(
+                f"Epoch {epoch + 1}/{EPOCHS} | "
+                f"Validation loss: {avg_validation_loss:.4f}"
+            )
 
     print(f"Training complete. Best checkpoint saved with loss {best_loss:.4f}")
 

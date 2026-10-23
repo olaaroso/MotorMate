@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.core.auth import require_role
 from app.core.database import db_instance
 from app.models.user import MechanicProfile
+from app.services.location_service import LocationProviderError, location_service
 
 router = APIRouter(prefix="/api/mechanics", tags=["Mechanic Matching"])
 
@@ -35,10 +36,26 @@ async def register_mechanic(mechanic: MechanicProfile):
 
     try:
         mechanics_collection = get_mechanics_collection()
+        await mechanics_collection.create_index([("location", "2dsphere")])
+
+        location = None
+        try:
+            location = await location_service.geocode_address(mechanic.address)
+        except LocationProviderError:
+            pass
+
+        update = {"$set": mechanic_dict}
+        if location:
+            update["$set"]["location"] = {
+                "type": "Point",
+                "coordinates": [location["longitude"], location["latitude"]],
+            }
+        else:
+            update["$unset"] = {"location": ""}
 
         await mechanics_collection.update_one(
             {"owner_id": owner_id},
-            {"$set": mechanic_dict},
+            update,
             upsert=True,
         )
 
