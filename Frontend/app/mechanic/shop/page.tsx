@@ -15,8 +15,6 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 
 import { auth } from "@/lib/firebase";
-import AppointmentAvailability from "@/components/AppointmentAvailability";
-
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 const DAYS = [
@@ -98,7 +96,6 @@ export default function MechanicShopPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [isNewProfile, setIsNewProfile] = useState(true);
-  const [ownerId, setOwnerId] = useState("");
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -113,12 +110,9 @@ export default function MechanicShopPage() {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
-        setOwnerId("");
         setLoading(false);
         return;
       }
-
-      setOwnerId(user.uid);
 
       try {
         const response = await fetch(`${apiUrl}/api/mechanics/${user.uid}`);
@@ -537,6 +531,7 @@ export default function MechanicShopPage() {
                 </h2>
                 <p className="text-sm text-slate-500">
                   Leave a day blank if you&apos;re closed or hours vary.
+                  Customers can request 30-minute appointments within these hours.
                 </p>
               </div>
             </div>
@@ -619,13 +614,6 @@ export default function MechanicShopPage() {
             </button>
           </div>
         </form>
-
-        {/* APPOINTMENT AVAILABILITY (saves independently of the form above) */}
-        {ownerId && (
-            <div className="mt-6">
-              <AppointmentAvailability ownerId={ownerId} />
-            </div>
-        )}
       </div>
   );
 }

@@ -1,14 +1,13 @@
 import re
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import List, Optional
 
-from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import require_role
 from app.core.database import db_instance
-from app.models.appointment import AppointmentSlotCreate
 from app.models.user import MechanicProfile
+from app.services.scheduling import remove_past_windows, windows_for_date
 
 router = APIRouter(prefix="/api/mechanics", tags=["Mechanic Matching"])
 
@@ -21,22 +20,6 @@ def get_mechanics_collection():
         )
 
     return db_instance.db["mechanics"]
-
-
-def get_availability_collection():
-    """
-    Appointment slots live in their own collection (one document per
-    slot) rather than embedded on the mechanic profile, because
-    /register does a full `$set` of the profile and would otherwise
-    clobber slots on every shop-profile save.
-    """
-    if db_instance.db is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Database is not connected.",
-        )
-
-    return db_instance.db["mechanic_availability_slots"]
 
 
 def serialize_mongo_document(document: dict):
@@ -91,11 +74,9 @@ async def browse_mechanics(
 ):
     """
     Public, read-only mechanic discovery for the car-owner Find Mechanics
-    page. Each profile includes its upcoming slots with status "available".
-    Uses exactly two queries: one for profiles, one for all their slots.
+    page. Appointment availability comes from each profile's operating_hours.
     """
     mechanics_collection = get_mechanics_collection()
-    availability_collection = get_availability_collection()
 
     filter_query: dict = {"owner_id": {"$exists": True, "$nin": [None, ""]}}
 
@@ -114,30 +95,6 @@ async def browse_mechanics(
     try:
         cursor = mechanics_collection.find(filter_query).sort("shop_name", 1).limit(50)
         mechanics = [serialize_mongo_document(doc) async for doc in cursor]
-
-        slots_by_owner: dict = {m["owner_id"]: [] for m in mechanics}
-
-        if slots_by_owner:
-            slots_cursor = availability_collection.find(
-                {
-                    "owner_id": {"$in": list(slots_by_owner.keys())},
-                    "status": "available",
-                    "date": {"$gte": date.today().isoformat()},
-                }
-            ).sort([("date", 1), ("time", 1)])
-
-            async for slot in slots_cursor:
-                slots_by_owner[slot["owner_id"]].append(
-                    {
-                        "id": str(slot["_id"]),
-                        "date": slot.get("date"),
-                        "time": slot.get("time"),
-                        "status": slot.get("status"),
-                    }
-                )
-
-        for mechanic in mechanics:
-            mechanic["available_slots"] = slots_by_owner.get(mechanic["owner_id"], [])
 
         return {"count": len(mechanics), "results": mechanics}
     except HTTPException:
@@ -188,148 +145,55 @@ async def search_mechanics(
 
 
 # =========================================================
-# APPOINTMENT AVAILABILITY SLOTS
+# APPOINTMENT WINDOWS (generated from operating_hours)
 # =========================================================
-#
-# Slot status is strictly the slot's own availability state
-# ("available" now; "booked" later once a service request is
-# accepted). Pending/accepted/declined belong to the future
-# service-request document, not to the slot.
 
 
-@router.get("/{owner_id}/availability")
-async def get_availability_slots(owner_id: str):
+@router.get("/{owner_id}/appointment-windows")
+async def get_appointment_windows(
+    owner_id: str,
+    appointment_date: date = Query(
+        ..., alias="date", description="Appointment date, YYYY-MM-DD"
+    ),
+):
     """
-    Lists a mechanic's appointment slots sorted by date, then time.
-    Returns an empty list (not 404) when the mechanic has no slots yet.
-    """
-    owner_id = owner_id.strip()
-
-    if not owner_id:
-        raise HTTPException(status_code=400, detail="owner_id is required.")
-
-    availability_collection = get_availability_collection()
-
-    try:
-        cursor = availability_collection.find({"owner_id": owner_id}).sort(
-            [("date", 1), ("time", 1)]
-        )
-
-        results = []
-        async for slot in cursor:
-            results.append(serialize_mongo_document(slot))
-
-        return {"count": len(results), "results": results}
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to retrieve appointment availability.",
-        )
-
-
-@router.post("/{owner_id}/availability")
-async def add_availability_slot(owner_id: str, payload: AppointmentSlotCreate):
-    """
-    Adds a single appointment slot for a mechanic. Rejects past dates and
-    exact duplicates (same owner, date and time) with 409.
+    Returns the 30-minute appointment windows for one date, generated from
+    the shop's operating hours for that weekday. Windows that have already
+    started are omitted. Pending requests do not remove windows.
     """
     owner_id = owner_id.strip()
 
     if not owner_id:
         raise HTTPException(status_code=400, detail="owner_id is required.")
 
-    if payload.date < date.today():
+    if appointment_date < date.today():
         raise HTTPException(
             status_code=400,
-            detail="Appointment slots cannot be in the past.",
+            detail="Appointment date cannot be in the past.",
         )
-
-    availability_collection = get_availability_collection()
-
-    slot_date = payload.date.isoformat()
-    slot_time = payload.time
 
     try:
-        existing_slot = await availability_collection.find_one(
-            {
-                "owner_id": owner_id,
-                "date": slot_date,
-                "time": slot_time,
-            }
+        profile = await get_mechanics_collection().find_one({"owner_id": owner_id})
+
+        if not profile:
+            raise HTTPException(status_code=404, detail="Mechanic profile not found.")
+
+        day_hours, windows = windows_for_date(
+            profile.get("operating_hours"), appointment_date
         )
 
-        if existing_slot:
-            raise HTTPException(
-                status_code=409,
-                detail="You already have an appointment slot at that date and time.",
-            )
-
-        slot_document = {
-            "owner_id": owner_id,
-            "date": slot_date,
-            "time": slot_time,
-            "status": "available",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-        result = await availability_collection.insert_one(slot_document)
-        slot_document["_id"] = result.inserted_id
-
         return {
-            "message": "Appointment slot added successfully.",
-            "slot": serialize_mongo_document(slot_document),
+            "date": appointment_date.isoformat(),
+            "open": day_hours is not None,
+            "hours": day_hours,
+            "windows": remove_past_windows(windows, appointment_date),
         }
     except HTTPException:
         raise
     except Exception:
         raise HTTPException(
             status_code=500,
-            detail="Failed to add appointment slot.",
-        )
-
-
-@router.delete("/{owner_id}/availability/{slot_id}")
-async def delete_availability_slot(owner_id: str, slot_id: str):
-    """
-    Removes one of the mechanic's appointment slots. The delete filter
-    includes owner_id so a mechanic can only remove their own slots.
-    """
-    owner_id = owner_id.strip()
-
-    if not owner_id:
-        raise HTTPException(status_code=400, detail="owner_id is required.")
-
-    if not ObjectId.is_valid(slot_id):
-        raise HTTPException(status_code=400, detail="Invalid slot ID.")
-
-    availability_collection = get_availability_collection()
-
-    try:
-        result = await availability_collection.delete_one(
-            {
-                "_id": ObjectId(slot_id),
-                "owner_id": owner_id,
-            }
-        )
-
-        if result.deleted_count == 0:
-            raise HTTPException(
-                status_code=404,
-                detail="Appointment slot not found or you do not own it.",
-            )
-
-        return {
-            "message": "Appointment slot removed successfully.",
-            "slot_id": slot_id,
-        }
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to remove appointment slot.",
+            detail="Failed to retrieve appointment windows.",
         )
 
 

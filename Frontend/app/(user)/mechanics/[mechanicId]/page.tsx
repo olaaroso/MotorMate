@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import {
@@ -38,11 +38,15 @@ type MechanicProfile = {
   rating?: number;
 };
 
-type AppointmentSlot = {
-  id: string;
-  date: string; // "YYYY-MM-DD"
-  time: string; // "HH:MM" (24-hour)
-  status: string;
+type AppointmentWindow = {
+  start: string; // "HH:MM" (24-hour)
+  end: string; // "HH:MM" (24-hour)
+};
+
+type DayWindows = {
+  open: boolean;
+  hours: string | null;
+  windows: AppointmentWindow[];
 };
 
 type RawVehicle = {
@@ -82,27 +86,33 @@ const DAY_LABELS: Record<string, string> = {
   sunday: "Sun",
 };
 
-function getLocalNow() {
+function getLocalToday() {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60 * 1000;
-  const iso = new Date(now.getTime() - offset).toISOString();
-  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
-function formatTime(time: string) {
+function splitTime(time: string) {
   const [hourText, minute = "00"] = time.split(":");
   const hour = Number(hourText);
-  if (Number.isNaN(hour)) return time;
   const ampm = hour < 12 ? "AM" : "PM";
   const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  return `${displayHour}:${minute} ${ampm}`;
+  return { clock: `${displayHour}:${minute}`, ampm };
 }
 
-function formatSlotDate(dateString: string, long = false) {
+function formatWindow({ start, end }: AppointmentWindow) {
+  const from = splitTime(start);
+  const to = splitTime(end);
+  return from.ampm === to.ampm
+    ? `${from.clock} – ${to.clock} ${to.ampm}`
+    : `${from.clock} ${from.ampm} – ${to.clock} ${to.ampm}`;
+}
+
+function formatLongDate(dateString: string) {
   const [year, month, day] = dateString.split("-").map(Number);
   return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    weekday: long ? "long" : "short",
-    month: long ? "long" : "short",
+    weekday: "long",
+    month: "long",
     day: "numeric",
   });
 }
@@ -143,47 +153,28 @@ function toGarageVehicle(raw: RawVehicle): GarageVehicle | null {
   };
 }
 
-async function fetchUpcomingSlots(mechanicId: string) {
+async function fetchWindows(mechanicId: string, date: string): Promise<DayWindows> {
   const response = await fetch(
-    `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}/availability`
+    `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}/appointment-windows?date=${date}`
   );
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.detail || "Failed to load appointment slots.");
+    throw new Error(data.detail || "Failed to load appointment times.");
   }
 
-  const now = getLocalNow();
-
-  return ((data.results || []) as AppointmentSlot[]).filter(
-    (slot) =>
-      slot.status === "available" &&
-      (slot.date > now.date || (slot.date === now.date && slot.time > now.time))
-  );
+  return {
+    open: !!data.open,
+    hours: data.hours ?? null,
+    windows: data.windows || [],
+  };
 }
 
 export default function MechanicDetailPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="mx-auto flex min-h-[500px] max-w-7xl items-center justify-center p-8 text-gray-500">
-          <Loader2 size={24} className="mr-3 animate-spin" />
-          Loading shop...
-        </div>
-      }
-    >
-      <MechanicDetailContent />
-    </Suspense>
-  );
-}
-
-function MechanicDetailContent() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const mechanicId = decodeURIComponent(String(params.mechanicId || ""));
 
   const [profile, setProfile] = useState<MechanicProfile | null>(null);
-  const [slots, setSlots] = useState<AppointmentSlot[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -192,9 +183,12 @@ function MechanicDetailContent() {
   const [vehicles, setVehicles] = useState<GarageVehicle[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
 
-  const [selectedSlotId, setSelectedSlotId] = useState(
-    () => searchParams.get("slot") || ""
-  );
+  const [appointmentDate, setAppointmentDate] = useState("");
+  const [dayWindows, setDayWindows] = useState<DayWindows | null>(null);
+  const [windowsLoading, setWindowsLoading] = useState(false);
+  const [windowsError, setWindowsError] = useState("");
+  const [windowsRefresh, setWindowsRefresh] = useState(0);
+  const [selectedStart, setSelectedStart] = useState("");
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const [serviceRequested, setServiceRequested] = useState("");
   const [problemDescription, setProblemDescription] = useState("");
@@ -203,7 +197,7 @@ function MechanicDetailContent() {
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  // Shop profile + slots
+  // Shop profile
   useEffect(() => {
     if (!mechanicId) return;
 
@@ -211,10 +205,9 @@ function MechanicDetailContent() {
 
     (async () => {
       try {
-        const [profileResponse, upcomingSlots] = await Promise.all([
-          fetch(`${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}`),
-          fetchUpcomingSlots(mechanicId),
-        ]);
+        const profileResponse = await fetch(
+          `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}`
+        );
         const profileData = await profileResponse.json().catch(() => ({}));
 
         if (!profileResponse.ok) {
@@ -225,10 +218,7 @@ function MechanicDetailContent() {
           );
         }
 
-        if (!cancelled) {
-          setProfile(profileData.profile);
-          setSlots(upcomingSlots);
-        }
+        if (!cancelled) setProfile(profileData.profile);
       } catch (err) {
         console.error("Failed to load mechanic:", err);
         if (!cancelled) {
@@ -243,6 +233,44 @@ function MechanicDetailContent() {
       cancelled = true;
     };
   }, [mechanicId]);
+
+  // Generated 30-minute windows for the chosen date
+  useEffect(() => {
+    if (!mechanicId || !appointmentDate) return;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        setWindowsLoading(true);
+        setWindowsError("");
+
+        const result = await fetchWindows(mechanicId, appointmentDate);
+
+        if (!cancelled) {
+          setDayWindows(result);
+          setSelectedStart((current) =>
+            result.windows.some((window) => window.start === current) ? current : ""
+          );
+        }
+      } catch (err) {
+        console.error("Failed to load appointment windows:", err);
+        if (!cancelled) {
+          setDayWindows(null);
+          setSelectedStart("");
+          setWindowsError(
+            err instanceof Error ? err.message : "Failed to load appointment times."
+          );
+        }
+      } finally {
+        if (!cancelled) setWindowsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mechanicId, appointmentDate, windowsRefresh]);
 
   // Signed-in customer: name (Firestore) + saved vehicles (Garage API)
   useEffect(() => {
@@ -295,20 +323,12 @@ function MechanicDetailContent() {
     return () => unsubscribe();
   }, []);
 
-  const groupedSlots = useMemo(() => {
-    const groups = new Map<string, AppointmentSlot[]>();
-    for (const slot of slots) {
-      const existing = groups.get(slot.date);
-      if (existing) existing.push(slot);
-      else groups.set(slot.date, [slot]);
-    }
-    return Array.from(groups.entries());
-  }, [slots]);
-
-  const selectedSlot = slots.find((slot) => slot.id === selectedSlotId) || null;
   const isOwnShop = !!currentUserId && currentUserId === mechanicId;
   const services = profile?.services_offered || [];
   const hours = groupHours(profile?.operating_hours);
+  const acceptsRequests = hours.length > 0;
+  const selectedWindow =
+    dayWindows?.windows.find((window) => window.start === selectedStart) || null;
 
   const handleSubmit = async () => {
     setSubmitError("");
@@ -325,8 +345,8 @@ function MechanicDetailContent() {
       return;
     }
 
-    if (!selectedSlot) {
-      setSubmitError("Choose an appointment time.");
+    if (!appointmentDate || !selectedWindow) {
+      setSubmitError("Choose an appointment date and time.");
       return;
     }
 
@@ -352,7 +372,9 @@ function MechanicDetailContent() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          slot_id: selectedSlot.id,
+          mechanic_id: mechanicId,
+          appointment_date: appointmentDate,
+          appointment_start_time: selectedWindow.start,
           customer_id: currentUserId,
           customer_name: customerName,
           vehicle_id: selectedVehicleId,
@@ -363,11 +385,9 @@ function MechanicDetailContent() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        // The slot may have been removed or taken; refresh what's offered.
-        if (response.status === 404 || response.status === 409) {
-          fetchUpcomingSlots(mechanicId)
-            .then(setSlots)
-            .catch(() => undefined);
+        // Hours may have changed or the time may have passed; refresh.
+        if (response.status === 400 || response.status === 409) {
+          setWindowsRefresh((count) => count + 1);
         }
 
         throw new Error(data.detail || "Unable to submit your request.");
@@ -539,13 +559,13 @@ function MechanicDetailContent() {
               </div>
             )}
 
-            {submitSuccess && selectedSlot && (
+            {submitSuccess && selectedWindow && (
               <div className="mt-5 flex gap-3 rounded-xl border border-green-200 bg-green-50 p-4 text-green-800">
                 <CheckCircle2 size={20} className="mt-0.5 shrink-0" />
                 <div>
                   <p className="font-semibold">Request sent</p>
                   <p className="mt-1 text-sm">
-                    {formatSlotDate(selectedSlot.date)} • {formatTime(selectedSlot.time)}.
+                    {formatLongDate(appointmentDate)} • {formatWindow(selectedWindow)}.
                     Status: <span className="font-semibold">Pending</span> until the shop responds.
                   </p>
                 </div>
@@ -565,51 +585,94 @@ function MechanicDetailContent() {
               </div>
             )}
 
-            {!isOwnShop && (
-              <div className="mt-6 space-y-6">
-                {/* SLOT */}
-                <div>
-                  <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <CalendarDays size={16} className="text-[#001F3F]" />
-                    Appointment Time
-                  </p>
+            {!isOwnShop && !acceptsRequests && (
+              <div className="mt-5 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-sm text-slate-500">
+                This shop hasn&apos;t listed its operating hours, so it isn&apos;t
+                accepting online appointment requests yet.
+              </div>
+            )}
 
-                  {slots.length === 0 ? (
-                    <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-center text-sm text-slate-500">
-                      No open appointments right now.
-                    </p>
-                  ) : (
-                    <div className="mt-3 max-h-64 space-y-3 overflow-y-auto pr-1">
-                      {groupedSlots.map(([date, dateSlots]) => (
-                        <div key={date}>
-                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                            {formatSlotDate(date, true)}
+            {!isOwnShop && acceptsRequests && (
+              <div className="mt-6 space-y-6">
+                {/* DATE + TIME */}
+                <div>
+                  <label
+                    htmlFor="appointment-date"
+                    className="flex items-center gap-2 text-sm font-semibold text-slate-700"
+                  >
+                    <CalendarDays size={16} className="text-[#001F3F]" />
+                    Appointment Date
+                  </label>
+                  <input
+                    id="appointment-date"
+                    type="date"
+                    min={getLocalToday()}
+                    value={appointmentDate}
+                    onChange={(e) => {
+                      setAppointmentDate(e.target.value);
+                      setSelectedStart("");
+                      setDayWindows(null);
+                      setSubmitError("");
+                    }}
+                    disabled={formDisabled}
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
+                  />
+
+                  {appointmentDate && (
+                    <div className="mt-4">
+                      <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                        <Clock size={16} className="text-[#001F3F]" />
+                        Appointment Time
+                        <span className="font-normal text-slate-400">(30 min)</span>
+                      </p>
+
+                      {windowsLoading ? (
+                        <p className="mt-3 flex items-center text-sm text-slate-400">
+                          <Loader2 size={16} className="mr-2 animate-spin" />
+                          Loading times...
+                        </p>
+                      ) : windowsError ? (
+                        <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                          {windowsError}
+                        </p>
+                      ) : dayWindows && !dayWindows.open ? (
+                        <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-center text-sm text-slate-500">
+                          The shop is closed on {formatLongDate(appointmentDate)}. Pick another day.
+                        </p>
+                      ) : dayWindows && dayWindows.windows.length === 0 ? (
+                        <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-center text-sm text-slate-500">
+                          No times left on this day. Pick another day.
+                        </p>
+                      ) : dayWindows ? (
+                        <>
+                          <p className="mt-1 text-xs text-slate-400">
+                            Shop hours: {dayWindows.hours}
                           </p>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {dateSlots.map((slot) => {
-                              const selected = slot.id === selectedSlotId;
+                          <div className="mt-3 grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1">
+                            {dayWindows.windows.map((window) => {
+                              const selected = window.start === selectedStart;
                               return (
                                 <button
-                                  key={slot.id}
+                                  key={window.start}
                                   type="button"
                                   disabled={formDisabled}
                                   onClick={() => {
-                                    setSelectedSlotId(slot.id);
+                                    setSelectedStart(window.start);
                                     setSubmitError("");
                                   }}
-                                  className={`rounded-lg border px-3 py-1.5 text-sm font-medium transition disabled:cursor-not-allowed ${
+                                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed ${
                                     selected
                                       ? "border-[#001F3F] bg-[#001F3F] text-white"
                                       : "border-slate-200 bg-white text-slate-700 hover:border-[#001F3F] hover:bg-blue-50"
                                   }`}
                                 >
-                                  {formatTime(slot.time)}
+                                  {formatWindow(window)}
                                 </button>
                               );
                             })}
                           </div>
-                        </div>
-                      ))}
+                        </>
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -696,7 +759,7 @@ function MechanicDetailContent() {
                   disabled={
                     formDisabled ||
                     authLoading ||
-                    !selectedSlot ||
+                    !selectedWindow ||
                     !selectedVehicleId ||
                     !serviceRequested ||
                     problemDescription.trim().length < 10

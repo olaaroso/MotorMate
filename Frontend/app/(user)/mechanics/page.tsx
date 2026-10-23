@@ -20,15 +20,7 @@ import { auth } from "@/lib/firebase";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-const VISIBLE_SLOT_COUNT = 6;
 const VISIBLE_SERVICE_COUNT = 4;
-
-type AvailableSlot = {
-  id: string;
-  date: string; // "YYYY-MM-DD"
-  time: string; // "HH:MM" (24-hour)
-  status: "available";
-};
 
 type Mechanic = {
   id: string;
@@ -40,7 +32,6 @@ type Mechanic = {
   price_per_hour?: number | null;
   operating_hours?: Record<string, string> | null;
   rating?: number;
-  available_slots: AvailableSlot[];
 };
 
 const DAYS = [
@@ -62,31 +53,6 @@ const DAY_LABELS: Record<string, string> = {
   saturday: "Sat",
   sunday: "Sun",
 };
-
-function getLocalNow() {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60 * 1000;
-  const iso = new Date(now.getTime() - offset).toISOString();
-  return { date: iso.slice(0, 10), time: iso.slice(11, 16) };
-}
-
-function formatTime(time: string) {
-  const [hourText, minute = "00"] = time.split(":");
-  const hour = Number(hourText);
-  if (Number.isNaN(hour)) return time;
-  const ampm = hour < 12 ? "AM" : "PM";
-  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-  return `${displayHour}:${minute} ${ampm}`;
-}
-
-function formatSlotDate(dateString: string) {
-  const [year, month, day] = dateString.split("-").map(Number);
-  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 function groupHours(hours?: Record<string, string> | null) {
   if (!hours || !DAYS.some((day) => hours[day]?.trim())) return [];
@@ -118,7 +84,6 @@ export default function FindMechanicsPage() {
   const [appliedService, setAppliedService] = useState("");
 
   const [userId, setUserId] = useState<string | null>(null);
-  const [expandedSlots, setExpandedSlots] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -181,7 +146,6 @@ export default function FindMechanicsPage() {
   };
 
   const hasFilters = !!appliedZip || !!appliedService;
-  const now = getLocalNow();
 
   return (
     <div className="mx-auto max-w-7xl p-8">
@@ -196,8 +160,8 @@ export default function FindMechanicsPage() {
         </h1>
 
         <p className="mt-2 max-w-2xl text-gray-500">
-          Browse shops near you, compare services and labor rates, and see
-          when each mechanic has open appointments.
+          Browse shops near you, compare services and labor rates, and
+          request an appointment during shop hours.
         </p>
       </section>
 
@@ -318,16 +282,6 @@ export default function FindMechanicsPage() {
             {mechanics.map((mechanic) => {
               const services = mechanic.services_offered || [];
               const hours = groupHours(mechanic.operating_hours);
-
-              const slots = mechanic.available_slots.filter(
-                (slot) =>
-                  slot.date > now.date ||
-                  (slot.date === now.date && slot.time > now.time)
-              );
-              const expanded = !!expandedSlots[mechanic.id];
-              const visibleSlots = expanded
-                ? slots
-                : slots.slice(0, VISIBLE_SLOT_COUNT);
 
               const laborRate =
                 mechanic.price_per_hour !== undefined &&
@@ -459,57 +413,14 @@ export default function FindMechanicsPage() {
                       )}
                     </div>
 
-                    {/* AVAILABLE APPOINTMENTS (display-only) */}
+                    {/* APPOINTMENTS */}
                     <div className="mt-auto border-t border-slate-100 pt-5">
-                      <div className="flex items-center justify-between">
-                        <p className="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                          <CalendarDays size={16} className="text-[#001F3F]" />
-                          Available Appointments
-                        </p>
-                        <span className="rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-semibold text-green-700">
-                          {slots.length}
-                        </span>
-                      </div>
-
-                      {slots.length === 0 ? (
-                        <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-center text-sm text-slate-500">
-                          No open appointments right now.
-                        </p>
-                      ) : (
-                        <>
-                          <ul className="mt-3 flex flex-wrap gap-2">
-                            {visibleSlots.map((slot) => (
-                              <li key={slot.id}>
-                                <Link
-                                  href={`/mechanics/${encodeURIComponent(mechanic.owner_id)}?slot=${slot.id}`}
-                                  className="block rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-[#001F3F] hover:bg-blue-50"
-                                >
-                                  {formatSlotDate(slot.date)}
-                                  <span className="mx-1.5 text-slate-300">•</span>
-                                  {formatTime(slot.time)}
-                                </Link>
-                              </li>
-                            ))}
-                          </ul>
-
-                          {slots.length > VISIBLE_SLOT_COUNT && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setExpandedSlots((prev) => ({
-                                  ...prev,
-                                  [mechanic.id]: !expanded,
-                                }))
-                              }
-                              className="mt-3 text-sm font-semibold text-[#001F3F] hover:underline"
-                            >
-                              {expanded
-                                ? "Show fewer"
-                                : `Show all (${slots.length})`}
-                            </button>
-                          )}
-                        </>
-                      )}
+                      <p className="flex items-center gap-2 text-sm text-slate-600">
+                        <CalendarDays size={16} className="text-[#001F3F]" />
+                        {hours.length > 0
+                          ? "Book 30-minute appointments during shop hours."
+                          : "Not accepting online requests yet."}
+                      </p>
 
                       <Link
                         href={`/mechanics/${encodeURIComponent(mechanic.owner_id)}`}
