@@ -1,5 +1,6 @@
+import re
 from datetime import date, datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -80,6 +81,69 @@ async def register_mechanic(mechanic: MechanicProfile):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to save mechanic profile in the database.")
+
+
+@router.get("")
+async def browse_mechanics(
+    zip_code: Optional[str] = None,
+    service: Optional[str] = None,
+    exclude_owner_id: Optional[str] = None,
+):
+    """
+    Public, read-only mechanic discovery for the car-owner Find Mechanics
+    page. Each profile includes its upcoming slots with status "available".
+    Uses exactly two queries: one for profiles, one for all their slots.
+    """
+    mechanics_collection = get_mechanics_collection()
+    availability_collection = get_availability_collection()
+
+    filter_query: dict = {"owner_id": {"$exists": True, "$nin": [None, ""]}}
+
+    if exclude_owner_id and exclude_owner_id.strip():
+        filter_query["owner_id"]["$nin"].append(exclude_owner_id.strip())
+
+    if zip_code and zip_code.strip():
+        filter_query["address"] = {"$regex": re.escape(zip_code.strip())}
+
+    if service and service.strip():
+        filter_query["services_offered"] = {
+            "$regex": re.escape(service.strip()),
+            "$options": "i",
+        }
+
+    try:
+        cursor = mechanics_collection.find(filter_query).sort("shop_name", 1).limit(50)
+        mechanics = [serialize_mongo_document(doc) async for doc in cursor]
+
+        slots_by_owner: dict = {m["owner_id"]: [] for m in mechanics}
+
+        if slots_by_owner:
+            slots_cursor = availability_collection.find(
+                {
+                    "owner_id": {"$in": list(slots_by_owner.keys())},
+                    "status": "available",
+                    "date": {"$gte": date.today().isoformat()},
+                }
+            ).sort([("date", 1), ("time", 1)])
+
+            async for slot in slots_cursor:
+                slots_by_owner[slot["owner_id"]].append(
+                    {
+                        "id": str(slot["_id"]),
+                        "date": slot.get("date"),
+                        "time": slot.get("time"),
+                        "status": slot.get("status"),
+                    }
+                )
+
+        for mechanic in mechanics:
+            mechanic["available_slots"] = slots_by_owner.get(mechanic["owner_id"], [])
+
+        return {"count": len(mechanics), "results": mechanics}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to retrieve mechanics.")
 
 
 @router.get("/search")
