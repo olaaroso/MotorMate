@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   ArrowRight,
@@ -10,7 +11,6 @@ import {
   Loader2,
   MapPin,
   Phone,
-  Search,
   Star,
   Store,
   Wrench,
@@ -479,13 +479,15 @@ export default function FindMechanicsPage() {
                         <>
                           <ul className="mt-3 flex flex-wrap gap-2">
                             {visibleSlots.map((slot) => (
-                              <li
-                                key={slot.id}
-                                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm"
-                              >
-                                {formatSlotDate(slot.date)}
-                                <span className="mx-1.5 text-slate-300">•</span>
-                                {formatTime(slot.time)}
+                              <li key={slot.id}>
+                                <Link
+                                  href={`/mechanics/${encodeURIComponent(mechanic.owner_id)}?slot=${slot.id}`}
+                                  className="block rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-[#001F3F] hover:bg-blue-50"
+                                >
+                                  {formatSlotDate(slot.date)}
+                                  <span className="mx-1.5 text-slate-300">•</span>
+                                  {formatTime(slot.time)}
+                                </Link>
                               </li>
                             ))}
                           </ul>
@@ -508,6 +510,14 @@ export default function FindMechanicsPage() {
                           )}
                         </>
                       )}
+
+                      <Link
+                        href={`/mechanics/${encodeURIComponent(mechanic.owner_id)}`}
+                        className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#001F3F] py-2.5 text-sm font-semibold text-white transition hover:bg-[#003366]"
+                      >
+                        View Shop &amp; Request
+                        <ArrowRight size={16} />
+                      </Link>
                     </div>
                   </div>
                 </article>
@@ -516,13 +526,6 @@ export default function FindMechanicsPage() {
           </div>
         )}
       </section>
-
-      {!loading && mechanics.length > 0 && (
-        <p className="mt-6 flex items-center justify-center gap-2 text-center text-xs text-gray-400">
-          <Search size={13} />
-          Appointment requests are coming soon.
-        </p>
-      )}
     </div>
   );
 }

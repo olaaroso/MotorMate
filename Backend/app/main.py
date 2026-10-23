@@ -12,6 +12,7 @@ from app.api import (
     routes_vin,
     routes_service_history,
     routes_notifications,
+    routes_service_requests,
 )
 
 from app.core.database import (
@@ -112,6 +113,10 @@ app.include_router(
 
 app.include_router(
     routes_notifications.router, prefix="/api/notifications", tags=["Notifications"]
+)
+
+app.include_router(
+    routes_service_requests.router
 )
 
 
