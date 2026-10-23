@@ -46,8 +46,18 @@ export default function AccountSettingsPage() {
         setIsPhotoMenuOpen(false);
       }
     };
+
+    const handleScroll = () => {
+      setIsPhotoMenuOpen(false);
+    };
+
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    window.addEventListener("scroll", handleScroll, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
   }, []);
 
   useEffect(() => {
@@ -219,11 +229,11 @@ export default function AccountSettingsPage() {
           <div className="flex items-center gap-5">
 
             {/* INTERACTIVE AVATAR WRAPPER */}
-            <div className="relative flex w-20 flex-col items-center" ref={photoMenuRef}>
+            <div className="relative h-20 w-20 shrink-0" ref={photoMenuRef}>
 
               <div
                   onClick={() => !uploadingImage && setIsPhotoMenuOpen((prev) => !prev)}
-                  className="group relative flex h-20 w-20 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[#001F3F] text-xl font-bold text-white shadow-sm"
+                  className="group relative flex h-full w-full cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[#001F3F] text-xl font-bold text-white shadow-sm"
               >
                 {profileImage ? (
                     <img
@@ -247,7 +257,7 @@ export default function AccountSettingsPage() {
 
               {/* DROPDOWN MENU */}
               {isPhotoMenuOpen && (
-                  <div className="absolute left-1/2 top-full z-50 mt-2 flex w-max -translate-x-1/2 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                  <div className="absolute left-1/2 top-[90px] z-50 flex w-max -translate-x-1/2 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                     <label className="flex w-full cursor-pointer items-center whitespace-nowrap px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                       Upload a photo...
                       <input
