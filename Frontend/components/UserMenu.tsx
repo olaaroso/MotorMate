@@ -23,6 +23,7 @@ export default function UserMenu() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("MotorMate User");
   const [email, setEmail] = useState("");
+  const [profileImage, setProfileImage] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -34,6 +35,7 @@ export default function UserMenu() {
       if (!user) {
         setName("MotorMate User");
         setEmail("");
+        setProfileImage(""); // Clear image on logout
         if (unsubscribeSnapshot) unsubscribeSnapshot();
         return;
       }
@@ -44,12 +46,14 @@ export default function UserMenu() {
           "MotorMate User"
       );
       setEmail(user.email || "");
+      setProfileImage(user.photoURL || "");
 
       const userRef = doc(db, "users", user.uid);
 
       unsubscribeSnapshot = onSnapshot(userRef, (userSnapshot) => {
         if (userSnapshot.exists()) {
           const data = userSnapshot.data();
+
           const fName = data.firstName || "";
           const lName = data.lastName || "";
           const fullName = `${fName} ${lName}`.trim();
@@ -57,6 +61,17 @@ export default function UserMenu() {
           if (fullName) {
             setName(fullName);
           }
+
+          const fetchedImage =
+              data.profileImage ||
+              data.profileImageUrl ||
+              data.photoURL ||
+              data.photoUrl ||
+              data.avatar ||
+              data.imageUrl ||
+              "";
+
+          setProfileImage(fetchedImage);
         }
       }, (error) => {
         console.error("Failed to listen to user data:", error);
@@ -108,9 +123,17 @@ export default function UserMenu() {
         aria-expanded={open}
         className="flex items-center gap-2 rounded-xl p-1.5 pr-2.5 transition hover:bg-white/10"
       >
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-xs font-bold text-[#001F3F] shadow-sm">
-          {initials}
-        </div>
+        {profileImage ? (
+            <img
+                src={profileImage}
+                alt={name}
+                className="h-9 w-9 rounded-xl object-cover shadow-sm"
+            />
+        ) : (
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white text-xs font-bold text-[#001F3F] shadow-sm">
+              {initials}
+            </div>
+        )}
 
         <ChevronDown
           size={14}
@@ -123,9 +146,17 @@ export default function UserMenu() {
       {open && (
         <div className="absolute right-0 z-50 mt-3 w-77.5 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_rgba(15,23,42,0.18)]">
           <div className="flex gap-3 px-4 py-4">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#001F3F] text-sm font-bold text-white">
-              {initials}
-            </div>
+            {profileImage ? (
+                <img
+                    src={profileImage}
+                    alt={name}
+                    className="h-11 w-11 shrink-0 rounded-xl object-cover shadow-sm"
+                />
+            ) : (
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#001F3F] text-sm font-bold text-white">
+                  {initials}
+                </div>
+            )}
             <div className="min-w-0">
               <p className="truncate font-semibold text-slate-900">{name}</p>
               <p className="mt-0.5 truncate text-sm text-slate-500">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   CheckCircle2,
   Mail,
@@ -9,7 +9,8 @@ import {
   Save,
   User,
   Plus,
-  Loader2
+  Loader2,
+  Camera,
 } from "lucide-react";
 
 import { onAuthStateChanged } from "firebase/auth";
@@ -35,6 +36,19 @@ export default function AccountSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
+
+  const [isPhotoMenuOpen, setIsPhotoMenuOpen] = useState(false);
+  const photoMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (photoMenuRef.current && !photoMenuRef.current.contains(event.target as Node)) {
+        setIsPhotoMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -204,36 +218,65 @@ export default function AccountSettingsPage() {
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex items-center gap-5">
 
-            <div className="group relative flex h-20 w-20 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[#001F3F] text-xl font-bold text-white shadow-sm">
-              {profileImage ? (
+            {/* INTERACTIVE AVATAR WRAPPER */}
+            <div className="relative flex w-20 flex-col items-center" ref={photoMenuRef}>
 
-                  <img
-                      src={profileImage}
-                      alt="Profile"
-                      className="h-full w-full object-cover"
-                  />
-              ) : (
-                  <span>{initials}</span>
-              )}
-
-              {/* HOVER OVERLAY */}
-              <label className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/50 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                {uploadingImage ? (
-                    <Loader2 size={24} className="animate-spin text-white" />
+              <div
+                  onClick={() => !uploadingImage && setIsPhotoMenuOpen((prev) => !prev)}
+                  className="group relative flex h-20 w-20 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[#001F3F] text-xl font-bold text-white shadow-sm"
+              >
+                {profileImage ? (
+                    <img
+                        src={profileImage}
+                        alt="Profile"
+                        className="h-full w-full object-cover"
+                    />
                 ) : (
-                    <Plus size={28} className="text-white" />
+                    <span>{initials}</span>
                 )}
 
-                <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={handleImageUpload}
-                    disabled={uploadingImage}
-                />
-              </label>
-            </div>
+                {/* HOVER OVERLAY */}
+                <div className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/40 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                  {uploadingImage ? (
+                      <Loader2 size={24} className="animate-spin text-white" />
+                  ) : (
+                      <Camera size={24} className="text-white" />
+                  )}
+                </div>
+              </div>
 
+              {/* DROPDOWN MENU */}
+              {isPhotoMenuOpen && (
+                  <div className="absolute left-1/2 top-full z-50 mt-2 flex w-max -translate-x-1/2 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                    <label className="flex w-full cursor-pointer items-center whitespace-nowrap px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
+                      Upload a photo...
+                      <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            setIsPhotoMenuOpen(false);
+                            handleImageUpload(e);
+                          }}
+                          disabled={uploadingImage}
+                      />
+                    </label>
+
+                    {profileImage && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                              setProfileImage("");
+                              setIsPhotoMenuOpen(false);
+                            }}
+                            className="flex w-full items-center whitespace-nowrap px-4 py-1.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                        >
+                          Remove photo
+                        </button>
+                    )}
+                  </div>
+              )}
+            </div>
             <div>
               <h2 className="text-xl font-bold text-[#001F3F]">
                 {firstName || lastName
