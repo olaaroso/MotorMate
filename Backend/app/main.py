@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import (
     routes_auth,
     routes_diy,
+    routes_location,
     routes_mechanic,
     routes_predict,
     routes_vin,
@@ -100,6 +101,10 @@ app.include_router(
 
 app.include_router(
     routes_mechanic.router
+)
+
+app.include_router(
+    routes_location.router
 )
 
 app.include_router(

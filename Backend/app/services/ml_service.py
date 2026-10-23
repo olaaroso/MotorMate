@@ -1,6 +1,5 @@
 import os
 import sys
-from typing import Optional
 
 import mlflow
 import torch
@@ -15,6 +14,7 @@ if ml_pipeline_dir not in sys.path:
     sys.path.append(ml_pipeline_dir)
 
 predictor_model = None
+MODEL_VERSION = "maintenance-mlp-v2"
 
 
 def load_latest_model():
@@ -53,7 +53,13 @@ def load_latest_model():
         return None
 
 
-async def predict_maintenance(make: str, model_name: str, year: int, mileage: int) -> dict:
+async def predict_maintenance(
+    make: str,
+    model_name: str,
+    year: int,
+    mileage: int,
+    driving_habits: str = "City Commute",
+) -> dict:
     """Run a single forward pass for the vehicle prediction model."""
     model = load_latest_model()
 
@@ -63,12 +69,23 @@ async def predict_maintenance(make: str, model_name: str, year: int, mileage: in
     safe_year = year if year else 2010
     normalized_year = (safe_year - 2000) / 30.0
     normalized_mileage = mileage / 250000.0
-    input_tensor = torch.tensor([[normalized_year, normalized_mileage]], dtype=torch.float32)
+    usage_severity = {
+        "City Commute": 0.0,
+        "Highway": 0.1,
+        "Mixed": 0.35,
+        "Severe / Towing": 0.8,
+    }.get(driving_habits, 0.0)
+    features = [normalized_year, normalized_mileage, usage_severity]
+    input_dimension = next(
+        (layer.in_features for layer in model.modules() if isinstance(layer, torch.nn.Linear)),
+        len(features),
+    )
+    input_tensor = torch.tensor([features[:input_dimension]], dtype=torch.float32)
 
     try:
         with torch.no_grad():
             logits = model(input_tensor)
-            probabilities = torch.sigmoid(logits).squeeze().tolist()
+            probabilities = torch.sigmoid(logits).flatten().tolist()
     except Exception as exc:
         return {"status": "error", "message": f"Inference failed: {str(exc)}"}
 
@@ -94,7 +111,13 @@ async def predict_maintenance(make: str, model_name: str, year: int, mileage: in
     if not predicted_failures:
         predicted_failures.append({"part": "None expected soon", "probability": 1.0, "estimated_cost": 0})
 
-    return {"status": "success", "predictions": predicted_failures}
+    return {
+        "status": "success",
+        "model_version": (
+            MODEL_VERSION if input_dimension >= 3 else "maintenance-mlp-v1"
+        ),
+        "predictions": predicted_failures,
+    }
 
 
 def get_model_cache_size() -> int:
