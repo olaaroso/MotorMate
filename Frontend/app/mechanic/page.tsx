@@ -12,6 +12,8 @@ import {
   ThumbsDown,
   ThumbsUp,
   Wrench,
+  Plus,
+  X,
 } from "lucide-react";
 import { onAuthStateChanged } from "firebase/auth";
 
@@ -19,7 +21,7 @@ import { auth } from "@/lib/firebase";
 import StatCard from "@/components/StatCard";
 
 const apiUrl =
-  process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 type OperatingHours = Record<string, string>;
 
@@ -52,24 +54,61 @@ const DAY_ABBREV: Record<string, string> = {
   sunday: "Sun",
 };
 
-function summarizeHours(hours?: OperatingHours) {
-  if (!hours || Object.keys(hours).length === 0) {
-    return "Hours not set yet";
+function formatGroupedHours(hoursObj?: OperatingHours) {
+  if (!hoursObj || Object.keys(hoursObj).length === 0) {
+    return <span className="text-slate-500">Hours not set yet</span>;
   }
 
-  const entries = DAY_ORDER.filter((day) => hours[day]?.trim()).map(
-    (day) => `${DAY_ABBREV[day]}: ${hours[day]}`
-  );
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  const labels: Record<string, string> = {
+    monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed',
+    thursday: 'Thu', friday: 'Fri', saturday: 'Sat', sunday: 'Sun'
+  };
 
-  return entries.length ? entries.join(" · ") : "Hours not set yet";
+  const hasAnyHours = days.some(day => hoursObj[day]?.trim());
+  if (!hasAnyHours) {
+    return <span className="text-slate-500">Hours not set yet</span>;
+  }
+
+  const groups: { start: string; end: string; time: string }[] = [];
+  let currentGroup: { start: string; end: string; time: string } | null = null;
+
+  for (const day of days) {
+    const time = hoursObj[day]?.trim() || "Closed";
+
+    if (!currentGroup) {
+      currentGroup = { start: day, end: day, time };
+    } else if (currentGroup.time === time) {
+      currentGroup.end = day;
+    } else {
+      groups.push(currentGroup);
+      currentGroup = { start: day, end: day, time };
+    }
+  }
+
+  if (currentGroup) groups.push(currentGroup);
+
+  return (
+      <div className="flex w-full min-w-[200px] flex-col gap-1.5 py-1">
+        {groups.map((g, i) => (
+            <div key={i} className="flex justify-between text-sm">
+          <span className="font-semibold text-slate-700">
+            {g.start === g.end ? labels[g.start] : `${labels[g.start]} - ${labels[g.end]}`}
+          </span>
+              <span className={g.time === "Closed" ? "italic text-slate-400" : "text-slate-500"}>
+            {g.time}
+          </span>
+            </div>
+        ))}
+      </div>
+  );
 }
 
 export default function MechanicPage() {
-  const [profile, setProfile] = useState<MechanicProfileResponse | null>(
-    null
-  );
+  const [profile, setProfile] = useState<MechanicProfileResponse | null>(null);
   const [hasProfile, setHasProfile] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showServicesModal, setShowServicesModal] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -291,15 +330,29 @@ export default function MechanicPage() {
                 />
                 <ProfileRow
                   icon={Clock}
-                  label={summarizeHours(profile?.operating_hours)}
+                  label={formatGroupedHours(profile?.operating_hours)}
                 />
                 <ProfileRow
-                  icon={Wrench}
-                  label={
-                    profile?.services_offered?.length
-                      ? profile.services_offered.join(", ")
-                      : "No services listed yet"
-                  }
+                    icon={Wrench}
+                    label={
+                      !profile?.services_offered?.length ? (
+                          <span className="text-slate-500">No services listed yet</span>
+                      ) : (
+                          <div className="flex w-full items-center justify-between gap-2">
+                        <span className="line-clamp-1 pr-2">
+                          {profile.services_offered.slice(0, 3).join(", ")}
+                          {profile.services_offered.length > 3 ? "..." : ""}
+                        </span>
+                            <button
+                                onClick={() => setShowServicesModal(true)}
+                                className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-blue-50 text-[#001F3F] transition-colors hover:bg-[#001F3F] hover:text-white"
+                                title="View all services"
+                            >
+                              <Plus size={14} />
+                            </button>
+                          </div>
+                      )
+                    }
                 />
                 <ProfileRow icon={DollarSign} label={`${laborRate} labor rate`} />
               </>
@@ -307,23 +360,56 @@ export default function MechanicPage() {
           </div>
         </div>
       </section>
+
+      {showServicesModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                  <h3 className="text-xl font-bold text-[#001F3F]">Services Offered</h3>
+                  <p className="mt-0.5 text-sm text-slate-500">{shopName}</p>
+                </div>
+                <button
+                    onClick={() => setShowServicesModal(false)}
+                    className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-50 hover:text-slate-700"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="mt-4 max-h-[60vh] overflow-y-auto pr-1">
+                <ul className="space-y-2">
+                  {profile?.services_offered?.map((service, idx) => (
+                      <li key={idx} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-700">
+                        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[#001F3F] shadow-sm">
+                          <Wrench size={12} />
+                        </div>
+                        {service}
+                      </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+      )}
+
     </div>
   );
 }
 
 function ProfileRow({
-  icon: Icon,
-  label,
-}: {
+                      icon: Icon,
+                      label,
+                    }: {
   icon: React.ElementType;
-  label: string;
+  label: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#001F3F] shadow-sm">
-        <Icon size={16} />
+      <div className="flex items-start gap-4 rounded-xl border border-slate-100 bg-slate-50/60 px-4 py-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white text-[#001F3F] shadow-sm">
+          <Icon size={16} />
+        </div>
+        <div className="mt-0.5 text-sm font-medium text-slate-700 w-full">{label}</div>
       </div>
-      <p className="text-sm font-medium text-slate-700">{label}</p>
-    </div>
   );
 }

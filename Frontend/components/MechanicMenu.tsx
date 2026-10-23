@@ -11,7 +11,8 @@ import {
   Store,
 } from "lucide-react";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
+import { doc, onSnapshot } from "firebase/firestore";
 
 export default function MechanicMenu() {
   const [open, setOpen] = useState(false);
@@ -20,8 +21,10 @@ export default function MechanicMenu() {
   const menuRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         setName("MotorMate Shop");
         setEmail("");
@@ -29,20 +32,32 @@ export default function MechanicMenu() {
       }
 
       setName(
-        user.displayName?.trim() ||
+          user.displayName?.trim() ||
           user.email?.split("@")[0] ||
           "MotorMate Shop"
       );
       setEmail(user.email || "");
+
+      try {
+        const res = await fetch(`${apiUrl}/api/mechanics/${user.uid}`);
+        if (res.ok) {
+          const data = await res.json();
+          const profile = data.profile || {};
+
+          if (profile.shop_name) {
+            setName(profile.shop_name.trim());
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch shop data for MechanicMenu:", error);
+      }
     });
 
     return unsubscribe;
-  }, []);
+  }, [apiUrl]);
 
   const initials = useMemo(() => {
-    const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
-    if (!parts.length) return "MM";
-    return parts.map((part) => part[0]?.toUpperCase()).join("");
+    return name.trim().charAt(0).toUpperCase() || "M";
   }, [name]);
 
   const handleLogout = async () => {
@@ -67,6 +82,21 @@ export default function MechanicMenu() {
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    const handleShopUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent;
+      if (customEvent.detail) {
+        setName(customEvent.detail);
+      }
+    };
+
+    window.addEventListener("shopProfileUpdated", handleShopUpdate);
+
+    return () => {
+      window.removeEventListener("shopProfileUpdated", handleShopUpdate);
+    };
   }, []);
 
   return (

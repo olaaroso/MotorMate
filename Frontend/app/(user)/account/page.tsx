@@ -322,7 +322,7 @@ export default function AccountSettingsPage() {
               </div>
 
               <p className="mt-1 text-xs text-gray-400">
-                Email is tied to your signed-in Firebase account.
+                This email is used to sign in and cannot be changed here
               </p>
             </div>
 
