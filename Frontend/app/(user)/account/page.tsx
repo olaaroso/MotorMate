@@ -257,7 +257,7 @@ export default function AccountSettingsPage() {
 
               {/* DROPDOWN MENU */}
               {isPhotoMenuOpen && (
-                  <div className="absolute left-1/2 top-[90px] z-50 flex w-max -translate-x-1/2 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+                  <div className="absolute left-1/2 top-[90px] z-10 flex w-max -translate-x-1/2 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                     <label className="flex w-full cursor-pointer items-center whitespace-nowrap px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
                       Upload a photo...
                       <input
