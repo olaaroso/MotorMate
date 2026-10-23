@@ -426,6 +426,7 @@ async def list_listings(
 
     search: Optional[str] = None,
 
+    exclude_owner_id: Optional[str] = None,
 ):
 
     tools_collection = get_tools_collection()
@@ -464,7 +465,10 @@ async def list_listings(
 
         }
 
-
+        if exclude_owner_id:
+            filter_query["owner_id"] = {
+                "$ne": exclude_owner_id
+            }
 
         if category and category.lower() != "all":
 
