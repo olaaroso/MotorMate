@@ -2307,15 +2307,93 @@ async def approve_rental_request(
 
 
 # =========================================================
-# CANCEL APPROVED RENTAL
+# BORROWER CANCEL RENTAL REQUEST / RESERVATION
 # =========================================================
 
+@router.patch("/rental-requests/{request_id}/borrower-cancel")
+async def borrower_cancel_rental(request_id: str, renter_id: str):
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(status_code=400, detail="Invalid rental request ID.")
+
+    renter_id = renter_id.strip()
+    if not renter_id:
+        raise HTTPException(status_code=400, detail="renter_id is required.")
+
+    rentals = get_rental_requests_collection()
+    rental = await rentals.find_one({
+        "_id": ObjectId(request_id),
+        "renter_id": renter_id,
+    })
+
+    if not rental:
+        raise HTTPException(status_code=404, detail="Rental not found for this borrower.")
+
+    status = rental.get("status")
+    today = date.today().isoformat()
+    if status not in ("pending", "approved"):
+        raise HTTPException(status_code=409, detail="This rental can no longer be cancelled.")
+
+    # Pending requests can be withdrawn even after the requested dates.
+    # Approved rentals can only be cancelled through the start date.
+    if status == "approved" and str(rental.get("start_date", "")) < today:
+        raise HTTPException(status_code=409, detail="The cancellation deadline has passed.")
+
+    cancelled_at = datetime.now(timezone.utc).isoformat()
+    result = await rentals.update_one(
+        {
+            "_id": ObjectId(request_id),
+            "renter_id": renter_id,
+            "$or": [
+                {"status": "pending"},
+                {"status": "approved", "start_date": {"$gte": today}},
+            ],
+        },
+        {
+            "$set": {
+                "status": "cancelled",
+                "cancelled_at": cancelled_at,
+                "cancellation_reason": "Cancelled by borrower.",
+            }
+        },
+    )
+
+    if result.modified_count != 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Rental status changed. Please refresh and try again.",
+        )
+
+    updated_rental = await rentals.find_one({"_id": ObjectId(request_id)})
+    owner_id = updated_rental.get("owner_id")
+    if owner_id:
+        try:
+            await db_instance.db["notifications"].insert_one({
+                "user_id": owner_id,
+                "title": "Rental Cancelled",
+                "message": (
+                    f"The borrower cancelled their reservation for "
+                    f"{updated_rental.get('tool_name', 'your tool')}."
+                ),
+                "is_read": False,
+                "created_at": cancelled_at,
+            })
+        except Exception:
+            # The cancellation has already succeeded; a notification
+            # failure must not turn it into a failed cancellation.
+            pass
+
+    return {
+        "message": "Reservation cancelled successfully.",
+        "request": serialize_mongo_document(updated_rental),
+    }
+
+
+# =========================================================
+# CANCEL APPROVED RENTAL (TOOL OWNER)
+# =========================================================
 
 @router.patch("/rental-requests/{request_id}/cancel")
-async def cancel_rental(
-    request_id: str,
-    owner_id: str,
-):
+async def cancel_rental(request_id: str, owner_id: str):
     if not ObjectId.is_valid(request_id):
         raise HTTPException(
             status_code=400,
