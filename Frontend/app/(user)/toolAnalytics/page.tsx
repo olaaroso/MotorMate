@@ -28,7 +28,7 @@ type Rental = {
   cancelled_at?: string;
   rental_days: number;
   rental_price: number;
-  status: "pending" | "approved" | "active" | "completed" | "cancelled" | "rejected";
+  status: "pending" | "approved" | "pickup_pending" | "active" | "return_pending" | "completed" | "cancelled" | "rejected";
 };
 type Range = "all" | "30" | "90" | "year";
 type SortKey = "name" | "booked" | "rentals" | "days" | "cancelled" | "requests";
@@ -47,9 +47,9 @@ const dayCount = (start: string, end: string) => {
 };
 const dateLabel = (s: string) => s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—";
 const statusLabel: Record<Rental["status"], string> = {
-  pending: "Pending", approved: "Approved", active: "Active", completed: "Completed", cancelled: "Cancelled", rejected: "Rejected",
+  pending: "Pending", approved: "Approved", pickup_pending: "Pickup waiting", active: "Active", return_pending: "Return waiting", completed: "Completed", cancelled: "Cancelled", rejected: "Rejected",
 };
-const booked = (r: Rental) => ["approved", "active", "completed"].includes(r.status);
+const booked = (r: Rental) => ["approved", "pickup_pending", "active", "return_pending", "completed"].includes(r.status);
 
 // A CSV value that begins with a spreadsheet formula character must be escaped.
 const csvCell = (value: string | number) => {
@@ -139,7 +139,7 @@ export default function ToolAnalyticsPage() {
     const valid = periodRentals.filter(booked);
     const cancelled = periodRentals.filter((r) => r.status === "cancelled");
     const planned = valid.filter((r) => r.start_date > today);
-    const historical = valid.filter((r) => r.end_date < today || r.status === "completed");
+    const historical = valid.filter((r) => r.status === "completed");
     const actualDateDays = (r: Rental) => dayCount(r.start_date, r.end_date) || Number(r.rental_days || 0);
     return {
       requests: periodRentals.length,
@@ -166,7 +166,7 @@ export default function ToolAnalyticsPage() {
         row.rentals++;
         row.booked += Number(r.rental_price || 0);
         row.days += dayCount(r.start_date, r.end_date) || Number(r.rental_days || 0);
-        if (r.status === "completed" || r.end_date < today) row.completed++;
+        if (r.status === "completed") row.completed++;
       }
       if (r.status === "cancelled") row.cancelled++;
       if (r.status === "pending") row.pending++;
@@ -191,11 +191,11 @@ export default function ToolAnalyticsPage() {
 
   const statCards = [
     { title: "Booked rental value", value: money(stats.value), note: "Not confirmed payments", Icon: DollarSign },
-    { title: "Rentals booked", value: stats.bookedCount.toString(), note: "Approved, active or completed", Icon: Package },
+    { title: "Rentals booked", value: stats.bookedCount.toString(), note: "Uncancelled reservations, including handoffs", Icon: Package },
     { title: "Rental days booked", value: stats.days.toString(), note: "Inclusive reservation days", Icon: CalendarDays },
     { title: "Cancellations", value: stats.cancelled.toString(), note: "All cancelled requests", Icon: XCircle },
     { title: "Total requests", value: stats.requests.toString(), note: `${stats.pending} pending · ${stats.rejected} rejected`, Icon: Clock3 },
-    { title: "Average booked rental", value: money(stats.avgValue), note: `${stats.completed} past/completed rentals`, Icon: TrendingUp },
+    { title: "Average booked rental", value: money(stats.avgValue), note: `${stats.completed} confirmed returns`, Icon: TrendingUp },
   ];
 
   return (
@@ -228,7 +228,7 @@ export default function ToolAnalyticsPage() {
             </select>
           </label>
           <div className="ml-auto flex flex-wrap gap-2">
-            <button onClick={() => downloadCsv("motormate-tool-summary.csv", ["Tool", "Daily rate", "Requests", "Booked rentals", "Booked rental value", "Booked days", "Cancelled", "Pending", "Past/completed"], toolRows.map((r) => [r.name, r.rate, r.requests, r.rentals, r.booked, r.days, r.cancelled, r.pending, r.completed]))} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"><Download size={16}/> Tool CSV</button>
+            <button onClick={() => downloadCsv("motormate-tool-summary.csv", ["Tool", "Daily rate", "Requests", "Booked rentals", "Booked rental value", "Booked days", "Cancelled", "Pending", "Confirmed completed"], toolRows.map((r) => [r.name, r.rate, r.requests, r.rentals, r.booked, r.days, r.cancelled, r.pending, r.completed]))} className="inline-flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50"><Download size={16}/> Tool CSV</button>
             <button onClick={() => downloadCsv("motormate-rental-history.csv", ["Tool", "Renter", "Start", "End", "Status", "Days", "Rental value", "Request ID"], historyRows.map((r) => [r.tool_name, r.renter_name, r.start_date, r.end_date, r.status, dayCount(r.start_date,r.end_date) || r.rental_days, r.rental_price, r.id]))} className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-3 py-2.5 text-sm font-semibold text-white hover:bg-[#003366]"><Download size={16}/> History CSV</button>
           </div>
         </div>

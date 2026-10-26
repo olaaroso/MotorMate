@@ -745,7 +745,9 @@ async def get_listing(
                     "status": {
                         "$in": [
                             "approved",
+                            "pickup_pending",
                             "active",
+                            "return_pending",
                         ]
                     },
                     "end_date": {
@@ -1486,7 +1488,9 @@ async def create_rental_request(
                     "status": {
                         "$in": [
                             "approved",
+                            "pickup_pending",
                             "active",
+                            "return_pending",
                         ]
                     },
                     "start_date": {
@@ -1520,7 +1524,9 @@ async def create_rental_request(
                         "$in": [
                             "pending",
                             "approved",
+                            "pickup_pending",
                             "active",
+                            "return_pending",
                         ]
                     },
                     "start_date": {
@@ -2179,7 +2185,9 @@ async def approve_rental_request(
                     "status": {
                         "$in": [
                             "approved",
+                            "pickup_pending",
                             "active",
+                            "return_pending",
                         ]
                     },
                     "start_date": {
@@ -2333,10 +2341,8 @@ async def borrower_cancel_rental(request_id: str, renter_id: str):
     if status not in ("pending", "approved"):
         raise HTTPException(status_code=409, detail="This rental can no longer be cancelled.")
 
-    # Pending requests can be withdrawn even after the requested dates.
-    # Approved rentals can only be cancelled through the start date.
-    if status == "approved" and str(rental.get("start_date", "")) < today:
-        raise HTTPException(status_code=409, detail="The cancellation deadline has passed.")
+    # Both pending and approved may be withdrawn until physical pickup starts.
+    # The conditional update below guards against a concurrent pickup.
 
     cancelled_at = datetime.now(timezone.utc).isoformat()
     result = await rentals.update_one(
@@ -2345,7 +2351,7 @@ async def borrower_cancel_rental(request_id: str, renter_id: str):
             "renter_id": renter_id,
             "$or": [
                 {"status": "pending"},
-                {"status": "approved", "start_date": {"$gte": today}},
+                {"status": "approved"},
             ],
         },
         {
@@ -2431,14 +2437,11 @@ async def cancel_rental(request_id: str, owner_id: str):
                 ),
             )
 
-        if rental_request.get("status") not in [
-            "approved",
-            "active",
-        ]:
+        if rental_request.get("status") != "approved":
             raise HTTPException(
                 status_code=409,
                 detail=(
-                    "Only an approved or active rental "
+                    "Only an uncollected reservation "
                     "can be cancelled."
                 ),
             )
@@ -2459,15 +2462,6 @@ async def cancel_rental(request_id: str, owner_id: str):
                 ),
             )
 
-        if end_date < date.today().isoformat():
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "This rental has already ended and "
-                    "can no longer be cancelled."
-                ),
-            )
-
         cancelled_at = datetime.now(
             timezone.utc
         ).isoformat()
@@ -2479,7 +2473,6 @@ async def cancel_rental(request_id: str, owner_id: str):
                 "status": {
                     "$in": [
                         "approved",
-                        "active",
                     ]
                 },
             },
@@ -2533,6 +2526,129 @@ async def cancel_rental(request_id: str, owner_id: str):
                 f"{str(exc)}"
             ),
         )
+
+
+# =========================================================
+# HANDOFF AND RETURN: OWNER -> BORROWER -> OWNER
+# =========================================================
+
+class ConditionEvidence(BaseModel):
+    photo_url: Optional[str] = None
+    condition_notes: Optional[str] = None
+
+
+def _safe_evidence(payload: ConditionEvidence) -> dict:
+    import re
+    photo = (payload.photo_url or "").strip()
+    notes = (payload.condition_notes or "").strip()
+    if photo and not re.fullmatch(r"https://[a-zA-Z0-9.-]+/[^\s]+", photo):
+        raise HTTPException(400, "Photo URL must be an HTTPS URL.")
+    if len(photo) > 2000 or len(notes) > 1000:
+        raise HTTPException(400, "Photo URL or notes are too long.")
+    return {"photo_url": photo, "notes": notes}
+
+
+async def _notify_handoff(user_id: str, title: str, message: str) -> None:
+    if not user_id:
+        return
+    try:
+        await db_instance.db["notifications"].insert_one({
+            "user_id": user_id,
+            "title": title,
+            "message": message,
+            "is_read": False,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        # Handoff data must not be rolled back by notification failure.
+        pass
+
+
+@router.patch("/rental-requests/{request_id}/pickup/owner")
+async def owner_confirm_pickup(request_id: str, owner_id: str, payload: ConditionEvidence):
+    if not ObjectId.is_valid(request_id) or not owner_id.strip():
+        raise HTTPException(400, "Valid rental ID and owner_id required.")
+    evidence = _safe_evidence(payload)
+    rentals = get_rental_requests_collection()
+    now = datetime.now(timezone.utc).isoformat()
+    result = await rentals.find_one_and_update(
+        {
+            "_id": ObjectId(request_id), "owner_id": owner_id.strip(),
+            "status": "approved",
+            "start_date": {"$lte": date.today().isoformat()},
+            "end_date": {"$gte": date.today().isoformat()},
+        },
+        {"$set": {
+            "status": "pickup_pending", "pickup_owner_confirmed_at": now,
+            "pickup_owner_evidence": evidence,
+        }},
+        return_document=True,
+    )
+    if not result:
+        raise HTTPException(409, "Only an approved reservation within its rental dates can be handed over.")
+    await _notify_handoff(result.get("renter_id", ""), "Confirm Tool Pickup",
+                          f"The owner marked {result.get('tool_name', 'your tool')} as handed over. Please confirm receipt in My Rentals.")
+    return {"request": serialize_mongo_document(result)}
+
+
+@router.patch("/rental-requests/{request_id}/pickup/borrower")
+async def borrower_confirm_pickup(request_id: str, renter_id: str, payload: ConditionEvidence):
+    if not ObjectId.is_valid(request_id) or not renter_id.strip():
+        raise HTTPException(400, "Valid rental ID and renter_id required.")
+    evidence = _safe_evidence(payload)
+    rentals = get_rental_requests_collection()
+    now = datetime.now(timezone.utc).isoformat()
+    result = await rentals.find_one_and_update(
+        {"_id": ObjectId(request_id), "renter_id": renter_id.strip(), "status": "pickup_pending"},
+        {"$set": {"status": "active", "pickup_borrower_confirmed_at": now,
+                  "pickup_borrower_evidence": evidence}},
+        return_document=True,
+    )
+    if not result:
+        raise HTTPException(409, "Owner pickup confirmation must happen before borrower receipt confirmation.")
+    await _notify_handoff(result.get("owner_id", ""), "Tool Pickup Confirmed",
+                          f"The borrower confirmed receipt of {result.get('tool_name', 'your tool')}.")
+    return {"request": serialize_mongo_document(result)}
+
+
+@router.patch("/rental-requests/{request_id}/return/borrower")
+async def borrower_request_return(request_id: str, renter_id: str, payload: ConditionEvidence):
+    if not ObjectId.is_valid(request_id) or not renter_id.strip():
+        raise HTTPException(400, "Valid rental ID and renter_id required.")
+    evidence = _safe_evidence(payload)
+    rentals = get_rental_requests_collection()
+    now = datetime.now(timezone.utc).isoformat()
+    result = await rentals.find_one_and_update(
+        {"_id": ObjectId(request_id), "renter_id": renter_id.strip(), "status": "active"},
+        {"$set": {"status": "return_pending", "return_borrower_submitted_at": now,
+                  "return_borrower_evidence": evidence}},
+        return_document=True,
+    )
+    if not result:
+        raise HTTPException(409, "Only picked-up tools can be submitted for return.")
+    await _notify_handoff(result.get("owner_id", ""), "Tool Return Awaiting Confirmation",
+                          f"The borrower says {result.get('tool_name', 'your tool')} has been returned. Please inspect and confirm.")
+    return {"request": serialize_mongo_document(result)}
+
+
+@router.patch("/rental-requests/{request_id}/return/owner")
+async def owner_confirm_return(request_id: str, owner_id: str, payload: ConditionEvidence):
+    if not ObjectId.is_valid(request_id) or not owner_id.strip():
+        raise HTTPException(400, "Valid rental ID and owner_id required.")
+    evidence = _safe_evidence(payload)
+    rentals = get_rental_requests_collection()
+    now = datetime.now(timezone.utc).isoformat()
+    result = await rentals.find_one_and_update(
+        {"_id": ObjectId(request_id), "owner_id": owner_id.strip(), "status": "return_pending"},
+        {"$set": {"status": "completed", "return_owner_confirmed_at": now,
+                  "return_owner_evidence": evidence}},
+        return_document=True,
+    )
+    if not result:
+        raise HTTPException(409, "The borrower must submit the return before the owner confirms it.")
+    await _notify_handoff(result.get("renter_id", ""), "Tool Return Completed",
+                          f"The owner confirmed the return of {result.get('tool_name', 'your tool')}.")
+    return {"request": serialize_mongo_document(result)}
 
 
 # =========================================================
