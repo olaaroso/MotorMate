@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import {
+  ArrowUpRight,
+  BarChart3,
   Bell,
   CalendarDays,
   Camera,
@@ -1044,6 +1046,8 @@ export default function MyToolsPage() {
     <div className="mx-auto max-w-7xl p-8">
       {/* HEADER */}
 
+      
+
       <section className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">
@@ -1069,6 +1073,33 @@ export default function MyToolsPage() {
           List New Tool
         </Link>
       </section>
+
+      {/* RENTAL HISTORY & EARNINGS */}
+      <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#001F3F] text-white">
+            <BarChart3 size={23} />
+          </div>
+
+          <div>
+            <h2 className="text-lg font-bold text-[#001F3F]">
+              Rental History &amp; Earnings
+            </h2>
+            <p className="mt-1 max-w-xl text-sm text-gray-600">
+              Review your rental history, booked revenue, rental days, cancellations,
+              and performance across all your tools.
+            </p>
+          </div>
+        </div>
+
+        <Link
+          href="/toolAnalytics"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#001F3F] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#003366]"
+        >
+          View Analytics
+          <ArrowUpRight size={17} />
+        </Link>
+      </div>
 
       {/* ERROR */}
 
