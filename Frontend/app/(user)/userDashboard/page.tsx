@@ -17,7 +17,9 @@ import {
 } from "lucide-react";
 import { onAuthStateChanged } from "firebase/auth";
 
-import { auth } from "@/lib/firebase";
+import { doc, getDoc } from "firebase/firestore";
+
+import { auth, db } from "@/lib/firebase";
 import { createCarImage } from "@/lib/carImage";
 import StatCard from "@/components/StatCard";
 
@@ -80,17 +82,25 @@ export default function DashboardPage() {
         return;
       }
 
-      setDisplayName(
-        user.displayName?.trim().split(/\s+/)[0] ||
-          user.email?.split("@")[0] ||
-          "Mate"
-      );
+      try {
+        const userRef = doc(db, "users", user.uid);
+        const userSnapshot = await getDoc(userRef);
+
+        if (userSnapshot.exists() && userSnapshot.data().firstName) {
+          setDisplayName(userSnapshot.data().firstName);
+        } else {
+          setDisplayName(user.email?.split("@")[0] || "Mate");
+        }
+      } catch (err) {
+        console.error("Failed to load user profile for dashboard:", err);
+        setDisplayName(user.email?.split("@")[0] || "Mate");
+      }
 
       try {
         setLoading(true);
 
         const response = await fetch(
-          `${apiUrl}/api/vin/vehicles/${user.uid}`
+            `${apiUrl}/api/vin/vehicles/${user.uid}`
         );
 
         if (!response.ok) {
@@ -100,15 +110,15 @@ export default function DashboardPage() {
         const result = await response.json();
 
         const loadedVehicles: DashboardVehicle[] = await Promise.all(
-          (result.vehicles ?? []).map(async (car: ApiVehicle) => {
-            const make = titleCase(String(car.make || ""));
-            const model = titleCase(String(car.model || ""));
-            const year = String(car.year || "N/A");
-            const mileage = Number(car.current_mileage || 0);
+            (result.vehicles ?? []).map(async (car: ApiVehicle) => {
+              const make = titleCase(String(car.make || ""));
+              const model = titleCase(String(car.model || ""));
+              const year = String(car.year || "N/A");
+              const mileage = Number(car.current_mileage || 0);
 
-            let maintenance = "Inspection Required";
-            let maintenanceDistance = "Prediction unavailable";
-            let estimatedCost: number | null = null;
+              let maintenance = "Inspection Required";
+              let maintenanceDistance = "Prediction unavailable";
+              let estimatedCost: number | null = null;
 
             if (car.vin) {
               try {
@@ -197,10 +207,10 @@ export default function DashboardPage() {
     <div className="mx-auto max-w-7xl px-5 py-7 sm:px-8 sm:py-9">
       <section className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          
 
-          <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
-            Welcome back, {displayName}
+
+          <h1 className="text-3xl font-bold text-[#001F3F]">
+            Welcome back, <span className="capitalize">{displayName}</span>
           </h1>
 
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 sm:text-base">
@@ -555,7 +565,7 @@ function VehiclePreviewCard({
 
         <div className="mt-5 border-t border-slate-100 pt-4">
           <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-            Next maintenance
+            Pending maintenance
           </p>
 
           <div className="mt-2 flex items-center justify-between gap-3">

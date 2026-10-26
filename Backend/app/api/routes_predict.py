@@ -15,6 +15,9 @@ class PredictionRequest(BaseModel):
     vin: str
     mileage: int = Field(..., ge=0)
     driving_habits: str = "City Commute"
+    climate_condition: str = "Moderate"
+    primary_usage: str = "Daily Commuting"
+    recent_major_service: str = "Not Sure"
     owner_id: str | None = None
 
 
@@ -30,13 +33,16 @@ def get_vehicles_collection():
 
 
 async def create_vehicle_prediction(
-    vehicle: dict,
-    mileage: int,
-    make: str,
-    model_name: str,
-    year: int,
-    driving_habits: str,
-    vehicles_collection,
+        vehicle: dict,
+        mileage: int,
+        make: str,
+        model_name: str,
+        year: int,
+        driving_habits: str,
+        climate_condition: str,
+        primary_usage: str,
+        recent_major_service: str,
+        vehicles_collection,
 ) -> dict:
     prediction_results = await predict_maintenance(
         make=make,
@@ -44,6 +50,9 @@ async def create_vehicle_prediction(
         year=year,
         mileage=mileage,
         driving_habits=driving_habits,
+        climate_condition=climate_condition,
+        primary_usage=primary_usage,
+        recent_major_service=recent_major_service,
     )
     if prediction_results["status"] == "error":
         raise HTTPException(status_code=500, detail="Inference failed")
@@ -63,6 +72,9 @@ async def create_vehicle_prediction(
         "model": model_name,
         "year": year,
         "driving_habits": driving_habits,
+        "climate_condition": climate_condition,
+        "primary_usage": primary_usage,
+        "recent_major_service": recent_major_service,
         "updated_at": generated_at,
     }
     await vehicles_collection.update_one(
@@ -105,6 +117,10 @@ async def get_prediction(request: PredictionRequest):
         year = 2010
 
     driving_habits = request.driving_habits
+    climate_condition = request.climate_condition
+    primary_usage = request.primary_usage
+    recent_major_service = request.recent_major_service
+
     try:
         vehicles_collection = get_vehicles_collection()
         vehicle_query = {"vin": vin}
@@ -117,6 +133,9 @@ async def get_prediction(request: PredictionRequest):
         )
         if vehicle:
             driving_habits = vehicle.get("driving_habits", driving_habits)
+            climate_condition = vehicle.get("climate_condition", climate_condition)
+            primary_usage = vehicle.get("primary_usage", primary_usage)
+            recent_major_service = vehicle.get("recent_major_service", recent_major_service)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Vehicle data is unavailable.") from exc
 
@@ -132,6 +151,9 @@ async def get_prediction(request: PredictionRequest):
             model_name=vehicle.get("model", vehicle_data.get("Model", "Unknown")),
             year=vehicle_year,
             driving_habits=driving_habits,
+            climate_condition=climate_condition,
+            primary_usage=primary_usage,
+            recent_major_service=recent_major_service,
             vehicles_collection=vehicles_collection,
         )
 
@@ -141,6 +163,9 @@ async def get_prediction(request: PredictionRequest):
         year=year,
         mileage=request.mileage,
         driving_habits=driving_habits,
+        climate_condition=climate_condition,
+        primary_usage=primary_usage,
+        recent_major_service=recent_major_service,
     )
     if prediction_results["status"] == "error":
         raise HTTPException(status_code=500, detail="Inference failed")
@@ -155,8 +180,8 @@ async def get_prediction(request: PredictionRequest):
 
 @router.post("/vehicle/{vehicle_id}")
 async def predict_registered_vehicle(
-    vehicle_id: str,
-    request: VehiclePredictionRequest,
+        vehicle_id: str,
+        request: VehiclePredictionRequest,
 ):
     if not ObjectId.is_valid(vehicle_id):
         raise HTTPException(status_code=400, detail="Invalid vehicle ID.")
@@ -185,6 +210,9 @@ async def predict_registered_vehicle(
         model_name=vehicle.get("model", "Unknown"),
         year=year,
         driving_habits=vehicle.get("driving_habits", "City Commute"),
+        climate_condition=vehicle.get("climate_condition", "Moderate"),
+        primary_usage=vehicle.get("primary_usage", "Daily Commuting"),
+        recent_major_service=vehicle.get("recent_major_service", "Not Sure"),
         vehicles_collection=vehicles_collection,
     )
 
