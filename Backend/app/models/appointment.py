@@ -46,3 +46,13 @@ class ServiceRequestStatusUpdate(BaseModel):
             "completed. If supplied, the owner's Garage vehicle is updated too."
         ),
     )
+    completed_cost: Optional[float] = Field(
+        default=None,
+        ge=0,
+        description="Optional final service price recorded by the mechanic.",
+    )
+    completion_notes: Optional[str] = Field(
+        default=None,
+        max_length=1000,
+        description="Optional mechanic notes saved with the completed service.",
+    )

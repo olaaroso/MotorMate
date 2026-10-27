@@ -321,6 +321,7 @@ export default function MechanicPage() {
       : "Not set";
   const acceptingRequests =
     hasProfile &&
+    servicesCount > 0 &&
     Object.values(profile?.operating_hours || {}).some((hours) => hours?.trim());
   const featuredRequest = pendingRequests[0] || null;
 

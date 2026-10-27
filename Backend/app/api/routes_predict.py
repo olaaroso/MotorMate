@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException
@@ -18,12 +19,12 @@ class PredictionRequest(BaseModel):
     climate_condition: str = "Moderate"
     primary_usage: str = "Daily Commuting"
     recent_major_service: str = "Not Sure"
-    owner_id: str | None = None
+    owner_id: Optional[str] = None
 
 
 class VehiclePredictionRequest(BaseModel):
     owner_id: str
-    mileage: int | None = Field(default=None, ge=0)
+    mileage: Optional[int] = Field(default=None, ge=0)
 
 
 def get_vehicles_collection():
