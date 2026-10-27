@@ -1,8 +1,7 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
-from app.core.auth import require_role
 from app.core.database import db_instance
 from app.services.location_service import LocationProviderError, location_service
 
@@ -30,7 +29,6 @@ async def nearest_mechanics(
     radius_km: float = Query(50, gt=0, le=250, description="Maximum search distance in kilometers"),
     limit: int = Query(10, ge=1, le=50),
     service_needed: Optional[str] = Query(None, min_length=1, max_length=100),
-    _: dict = Depends(require_role("consumer", "diy")),
 ):
     if db_instance.db is None:
         raise HTTPException(status_code=503, detail="Database is not connected.")
@@ -71,14 +69,17 @@ async def nearest_mechanics(
                 {"$limit": limit},
                 {
                     "$project": {
+                        "owner_id": 1,
                         "shop_name": 1,
                         "address": 1,
                         "street_address": 1,
                         "city": 1,
                         "state": 1,
                         "zip_code": 1,
+                        "phone": 1,
                         "services_offered": 1,
                         "price_per_hour": 1,
+                        "operating_hours": 1,
                         "distance_meters": 1,
                     }
                 },
@@ -90,11 +91,20 @@ async def nearest_mechanics(
 
     results = [
         {
+            "id": str(mechanic["_id"]),
             "mechanic_id": str(mechanic["_id"]),
+            "owner_id": mechanic.get("owner_id"),
             "shop_name": mechanic.get("shop_name"),
             "address": format_mechanic_address(mechanic),
+            "street_address": mechanic.get("street_address"),
+            "city": mechanic.get("city"),
+            "state": mechanic.get("state"),
+            "zip_code": mechanic.get("zip_code"),
+            "phone": mechanic.get("phone"),
+            "services_offered": mechanic.get("services_offered", []),
             "services": mechanic.get("services_offered", []),
             "price_per_hour": mechanic.get("price_per_hour"),
+            "operating_hours": mechanic.get("operating_hours"),
             "distance_km": round(mechanic["distance_meters"] / 1000, 2),
         }
         for mechanic in mechanics

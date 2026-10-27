@@ -10,11 +10,14 @@ import {
   CheckCircle2,
   Clock,
   ClipboardCheck,
+  DollarSign,
+  FileText,
   Loader2,
   MapPin,
   RefreshCw,
   Store,
   Gauge,
+  Trash2,
   Wrench,
   XCircle,
   type LucideIcon,
@@ -54,6 +57,8 @@ type ServiceRequest = {
   responded_at?: string;
   completed_at?: string;
   completed_mileage?: number;
+  completed_cost?: number;
+  completion_notes?: string;
 };
 
 type RequestsResponse = {
@@ -171,7 +176,9 @@ export default function AppointmentsPage() {
   const [activeFilter, setActiveFilter] = useState<RequestFilter>("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [removingRequestId, setRemovingRequestId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -232,8 +239,30 @@ export default function AppointmentsPage() {
   );
 
   const visibleRequests = useMemo(() => {
-    if (activeFilter === "all") return requests;
-    return requests.filter((request) => request.status === activeFilter);
+    const statusOrder: Record<RequestStatus, number> = {
+      accepted: 0,
+      pending: 1,
+      declined: 2,
+      completed: 3,
+    };
+
+    const filtered =
+      activeFilter === "all"
+        ? requests
+        : requests.filter((request) => request.status === activeFilter);
+
+    return [...filtered].sort((a, b) => {
+      const statusDifference = statusOrder[a.status] - statusOrder[b.status];
+      if (statusDifference !== 0) return statusDifference;
+
+      if (a.status === "completed") {
+        return (b.completed_at || "").localeCompare(a.completed_at || "");
+      }
+
+      return `${a.appointment_date}T${a.appointment_start_time}`.localeCompare(
+        `${b.appointment_date}T${b.appointment_start_time}`
+      );
+    });
   }, [activeFilter, requests]);
 
   const refreshRequests = async () => {
@@ -242,6 +271,7 @@ export default function AppointmentsPage() {
     try {
       setRefreshing(true);
       setError("");
+      setNotice("");
       setRequests(await fetchCustomerRequests(customerId));
     } catch (refreshError) {
       setError(
@@ -251,6 +281,44 @@ export default function AppointmentsPage() {
       );
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  const removeCompletedRequest = async (request: ServiceRequest) => {
+    if (!customerId || request.status !== "completed" || removingRequestId) return;
+
+    const confirmed = window.confirm(
+      "Remove this completed appointment from My Appointments? Its Garage service-history record will be kept."
+    );
+    if (!confirmed) return;
+
+    try {
+      setRemovingRequestId(request.id);
+      setError("");
+      setNotice("");
+      const params = new URLSearchParams({
+        actor_id: customerId,
+        view: "customer",
+      });
+      const response = await fetch(
+        `${apiUrl}/api/service-requests/${encodeURIComponent(request.id)}?${params.toString()}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || "Failed to remove completed appointment.");
+      }
+
+      setRequests((previous) => previous.filter((item) => item.id !== request.id));
+      setNotice("Completed appointment removed. The service record remains in your Garage.");
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error
+          ? removeError.message
+          : "Failed to remove completed appointment."
+      );
+    } finally {
+      setRemovingRequestId(null);
     }
   };
 
@@ -312,9 +380,18 @@ export default function AppointmentsPage() {
         />
       </section>
 
-      {error && (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {error}
+      {(error || notice) && (
+        <div className="mt-6 space-y-3">
+          {error && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+          {notice && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+              {notice}
+            </div>
+          )}
         </div>
       )}
 
@@ -371,7 +448,13 @@ export default function AppointmentsPage() {
           ) : (
             <div className="space-y-4">
               {visibleRequests.map((request) => (
-                <AppointmentCard key={request.id} request={request} />
+                <AppointmentCard
+                  key={request.id}
+                  request={request}
+                  removing={removingRequestId === request.id}
+                  removeDisabled={Boolean(removingRequestId)}
+                  onRemove={() => void removeCompletedRequest(request)}
+                />
               ))}
             </div>
           )}
@@ -381,7 +464,17 @@ export default function AppointmentsPage() {
   );
 }
 
-function AppointmentCard({ request }: { request: ServiceRequest }) {
+function AppointmentCard({
+  request,
+  removing,
+  removeDisabled,
+  onRemove,
+}: {
+  request: ServiceRequest;
+  removing: boolean;
+  removeDisabled: boolean;
+  onRemove: () => void;
+}) {
   const status = statusStyles(request.status);
   const StatusIcon = status.icon;
 
@@ -456,6 +549,34 @@ function AppointmentCard({ request }: { request: ServiceRequest }) {
             </div>
           )}
 
+          {request.status === "completed" && (
+            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-blue-600">
+                <FileText size={14} />
+                Completed Service Details
+              </div>
+              {request.completed_cost !== undefined && (
+                <p className="mt-2 flex items-center gap-2 text-sm text-slate-700">
+                  <DollarSign size={14} />
+                  <span className="font-semibold">Final price:</span>
+                  {request.completed_cost.toLocaleString(undefined, {
+                    style: "currency",
+                    currency: "USD",
+                  })}
+                </p>
+              )}
+              {request.completion_notes?.trim() && (
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                  <span className="font-semibold">Mechanic notes:</span>{" "}
+                  {request.completion_notes}
+                </p>
+              )}
+              <p className="mt-2 text-xs text-slate-500">
+                This completed service is also saved in this vehicle&apos;s Garage service history.
+              </p>
+            </div>
+          )}
+
           <div className="mt-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
             <span className="font-semibold text-slate-800">Status:</span>{" "}
             {status.helper}
@@ -463,15 +584,33 @@ function AppointmentCard({ request }: { request: ServiceRequest }) {
           </div>
         </div>
 
-        {request.mechanic_id && (
-          <Link
-            href={`/mechanics/${encodeURIComponent(request.mechanic_id)}`}
-            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#001F3F] transition hover:border-[#001F3F] hover:bg-blue-50"
-          >
-            View Shop
-            <ArrowRight size={15} />
-          </Link>
-        )}
+        <div className="flex shrink-0 flex-row gap-2 xl:flex-col">
+          {request.mechanic_id && (
+            <Link
+              href={`/mechanics/${encodeURIComponent(request.mechanic_id)}`}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-[#001F3F] transition hover:border-[#001F3F] hover:bg-blue-50"
+            >
+              View Shop
+              <ArrowRight size={15} />
+            </Link>
+          )}
+
+          {request.status === "completed" && (
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={removeDisabled}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {removing ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              Remove
+            </button>
+          )}
+        </div>
       </div>
     </article>
   );

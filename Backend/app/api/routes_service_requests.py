@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query
@@ -118,6 +118,64 @@ def current_vehicle_mileage(vehicle: dict) -> Optional[int]:
         return None
 
     return mileage if mileage >= 0 else None
+
+
+async def sync_completed_service_history(request_document: dict):
+    """Create or refresh the Garage service-history record for a completed job."""
+    request_id = str(request_document.get("_id") or "").strip()
+    vehicle_id = str(request_document.get("vehicle_id") or "").strip()
+    owner_id = str(request_document.get("customer_id") or "").strip()
+
+    if not request_id or not owner_id or not ObjectId.is_valid(vehicle_id):
+        return
+
+    vehicle = await get_collection("vehicles").find_one(
+        {
+            "_id": ObjectId(vehicle_id),
+            "owner_id": owner_id,
+        }
+    )
+    if not vehicle:
+        return
+
+    mileage = request_document.get("completed_mileage")
+    if mileage is None:
+        mileage = current_vehicle_mileage(vehicle)
+    if mileage is None:
+        mileage = current_vehicle_mileage(request_document.get("vehicle_summary") or {})
+    if mileage is None:
+        mileage = 0
+
+    notes = str(request_document.get("completion_notes") or "").strip() or None
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    await get_collection("service_history").update_one(
+        {
+            "source_service_request_id": request_id,
+            "owner_id": owner_id,
+        },
+        {
+            "$set": {
+                "vehicle_id": vehicle_id,
+                "owner_id": owner_id,
+                "record_type": "maintenance",
+                "title": request_document.get("service_requested") or "Completed service",
+                "service_date": request_document.get("appointment_date"),
+                "mileage": mileage,
+                "cost": request_document.get("completed_cost"),
+                "provider": request_document.get("shop_name"),
+                "part_name": None,
+                "notes": notes,
+                "source": "mechanic_service_request",
+                "source_service_request_id": request_id,
+                "updated_at": now_iso,
+            },
+            "$setOnInsert": {
+                "created_at": now_iso,
+            },
+        },
+        upsert=True,
+    )
 
 
 @router.post("")
@@ -305,7 +363,7 @@ async def get_mechanic_service_requests(
     await ensure_service_request_indexes()
     requests = get_collection("service_requests")
 
-    query = {"mechanic_id": mechanic_id}
+    query = {"mechanic_id": mechanic_id, "hidden_for_mechanic": {"$ne": True}}
     if status:
         query["status"] = status
 
@@ -339,7 +397,7 @@ async def get_customer_service_requests(
     await ensure_service_request_indexes()
     requests = get_collection("service_requests")
 
-    query = {"customer_id": customer_id}
+    query = {"customer_id": customer_id, "hidden_for_customer": {"$ne": True}}
     if status:
         query["status"] = status
 
@@ -376,10 +434,18 @@ async def update_service_request_status(
     if not mechanic_id:
         raise HTTPException(status_code=400, detail="mechanic_id is required.")
 
-    if payload.completed_mileage is not None and payload.status != "completed":
+    has_completion_details = any(
+        value is not None
+        for value in (
+            payload.completed_mileage,
+            payload.completed_cost,
+            payload.completion_notes,
+        )
+    )
+    if has_completion_details and payload.status != "completed":
         raise HTTPException(
             status_code=400,
-            detail="completed_mileage can only be supplied when completing a request.",
+            detail="Completion mileage, cost, and notes can only be supplied when completing a request.",
         )
 
     await ensure_service_request_indexes()
@@ -402,6 +468,8 @@ async def update_service_request_status(
     current_status = request_document.get("status", "pending")
 
     if current_status == payload.status:
+        if current_status == "completed":
+            await sync_completed_service_history(request_document)
         return {
             "message": f"Service request is already {payload.status}.",
             "request": serialize_mongo_document(request_document),
@@ -416,58 +484,63 @@ async def update_service_request_status(
                 detail="Only an accepted appointment can be marked completed.",
             )
 
+        vehicle_id = str(request_document.get("vehicle_id") or "").strip()
+        customer_id = str(request_document.get("customer_id") or "").strip()
+
+        if not vehicle_id or not ObjectId.is_valid(vehicle_id):
+            raise HTTPException(
+                status_code=409,
+                detail="The linked vehicle is unavailable for completion.",
+            )
+
+        vehicle = await vehicles.find_one(
+            {
+                "_id": ObjectId(vehicle_id),
+                "owner_id": customer_id,
+            }
+        )
+        if not vehicle:
+            raise HTTPException(
+                status_code=404,
+                detail="The customer's vehicle could not be found.",
+            )
+
+        existing_mileage = current_vehicle_mileage(vehicle)
+        if (
+            payload.completed_mileage is not None
+            and existing_mileage is not None
+            and payload.completed_mileage < existing_mileage
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Completed mileage cannot be lower than the vehicle's "
+                    f"current mileage ({existing_mileage:,})."
+                ),
+            )
+
         completion_update = {
             "status": "completed",
             "completed_at": now_iso,
         }
 
         if payload.completed_mileage is not None:
-            vehicle_id = request_document.get("vehicle_id")
-            customer_id = request_document.get("customer_id")
-
-            if not vehicle_id or not ObjectId.is_valid(str(vehicle_id)):
-                raise HTTPException(
-                    status_code=409,
-                    detail="The linked vehicle is unavailable for a mileage update.",
-                )
-
-            vehicle = await vehicles.find_one(
-                {
-                    "_id": ObjectId(str(vehicle_id)),
-                    "owner_id": customer_id,
-                }
-            )
-            if not vehicle:
-                raise HTTPException(
-                    status_code=404,
-                    detail="The customer's vehicle could not be found.",
-                )
-
-            existing_mileage = current_vehicle_mileage(vehicle)
-            if (
-                existing_mileage is not None
-                and payload.completed_mileage < existing_mileage
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Completed mileage cannot be lower than the vehicle's "
-                        f"current mileage ({existing_mileage:,})."
-                    ),
-                )
-
             await vehicles.update_one(
                 {
-                    "_id": ObjectId(str(vehicle_id)),
+                    "_id": ObjectId(vehicle_id),
                     "owner_id": customer_id,
                 },
                 {"$set": {"current_mileage": payload.completed_mileage}},
             )
-
             completion_update["completed_mileage"] = payload.completed_mileage
-            completion_update["vehicle_summary.current_mileage"] = (
-                payload.completed_mileage
-            )
+            completion_update["vehicle_summary.current_mileage"] = payload.completed_mileage
+
+        if payload.completed_cost is not None:
+            completion_update["completed_cost"] = round(payload.completed_cost, 2)
+
+        completion_notes = str(payload.completion_notes or "").strip()
+        if completion_notes:
+            completion_update["completion_notes"] = completion_notes
 
         updated = await requests.find_one_and_update(
             {
@@ -485,8 +558,10 @@ async def update_service_request_status(
                 detail="Request is no longer an accepted appointment.",
             )
 
+        await sync_completed_service_history(updated)
+
         return {
-            "message": "Service request marked completed.",
+            "message": "Service request marked completed and added to Garage service history.",
             "request": serialize_mongo_document(updated),
         }
 
@@ -582,4 +657,53 @@ async def update_service_request_status(
     return {
         "message": "Service request accepted.",
         "request": serialize_mongo_document(updated),
+    }
+
+
+@router.delete("/{request_id}")
+async def remove_completed_service_request(
+    request_id: str,
+    actor_id: str = Query(..., min_length=1),
+    view: Literal["mechanic", "customer"] = Query(...),
+):
+    """Hide a completed request from one side's appointment list without deleting Garage history."""
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(status_code=400, detail="Invalid service request ID.")
+
+    actor_id = actor_id.strip()
+    if not actor_id:
+        raise HTTPException(status_code=400, detail="actor_id is required.")
+
+    requests = get_collection("service_requests")
+    request_object_id = ObjectId(request_id)
+    actor_field = "mechanic_id" if view == "mechanic" else "customer_id"
+    hidden_field = "hidden_for_mechanic" if view == "mechanic" else "hidden_for_customer"
+
+    request_document = await requests.find_one(
+        {
+            "_id": request_object_id,
+            actor_field: actor_id,
+        }
+    )
+    if not request_document:
+        raise HTTPException(status_code=404, detail="Service request not found.")
+
+    if request_document.get("status") != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="Only completed service requests can be removed from the list.",
+        )
+
+    await requests.update_one(
+        {"_id": request_object_id},
+        {
+            "$set": {
+                hidden_field: True,
+                f"{hidden_field}_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+
+    return {
+        "message": "Completed service removed from this appointment list.",
     }

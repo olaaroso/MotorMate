@@ -9,11 +9,14 @@ import {
   ClipboardList,
   Clock,
   ClipboardCheck,
+  DollarSign,
+  FileText,
   Gauge,
   Loader2,
   RefreshCw,
   ThumbsDown,
   ThumbsUp,
+  Trash2,
   UserRound,
   Wrench,
   X,
@@ -58,6 +61,8 @@ type ServiceRequest = {
   responded_at?: string;
   completed_at?: string;
   completed_mileage?: number;
+  completed_cost?: number;
+  completion_notes?: string;
 };
 
 type RequestsResponse = {
@@ -182,7 +187,10 @@ export default function MechanicRequestsPage() {
   } | null>(null);
   const [completionRequest, setCompletionRequest] = useState<ServiceRequest | null>(null);
   const [completionMileage, setCompletionMileage] = useState("");
+  const [completionCost, setCompletionCost] = useState("");
+  const [completionNotes, setCompletionNotes] = useState("");
   const [completionError, setCompletionError] = useState("");
+  const [removingRequestId, setRemovingRequestId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -249,8 +257,30 @@ export default function MechanicRequestsPage() {
   );
 
   const visibleRequests = useMemo(() => {
-    if (activeFilter === "all") return requests;
-    return requests.filter((request) => request.status === activeFilter);
+    const statusOrder: Record<RequestStatus, number> = {
+      pending: 0,
+      accepted: 1,
+      declined: 2,
+      completed: 3,
+    };
+
+    const filtered =
+      activeFilter === "all"
+        ? requests
+        : requests.filter((request) => request.status === activeFilter);
+
+    return [...filtered].sort((a, b) => {
+      const statusDifference = statusOrder[a.status] - statusOrder[b.status];
+      if (statusDifference !== 0) return statusDifference;
+
+      if (a.status === "completed") {
+        return (b.completed_at || "").localeCompare(a.completed_at || "");
+      }
+
+      return `${a.appointment_date}T${a.appointment_start_time}`.localeCompare(
+        `${b.appointment_date}T${b.appointment_start_time}`
+      );
+    });
   }, [activeFilter, requests]);
 
   const refreshRequests = async () => {
@@ -277,7 +307,9 @@ export default function MechanicRequestsPage() {
   const handleStatusChange = async (
     requestId: string,
     status: "accepted" | "declined" | "completed",
-    completedMileage?: number
+    completedMileage?: number,
+    completedCost?: number,
+    completionNotes?: string
   ) => {
     if (!mechanicId || updatingAction) return;
 
@@ -298,6 +330,12 @@ export default function MechanicRequestsPage() {
             status,
             ...(completedMileage !== undefined
               ? { completed_mileage: completedMileage }
+              : {}),
+            ...(completedCost !== undefined
+              ? { completed_cost: completedCost }
+              : {}),
+            ...(completionNotes?.trim()
+              ? { completion_notes: completionNotes.trim() }
               : {}),
           }),
         }
@@ -324,6 +362,8 @@ export default function MechanicRequestsPage() {
       if (status === "completed") {
         setCompletionRequest(null);
         setCompletionMileage("");
+        setCompletionCost("");
+        setCompletionNotes("");
         setCompletionError("");
       }
     } catch (updateError) {
@@ -340,6 +380,8 @@ export default function MechanicRequestsPage() {
   const openCompletion = (request: ServiceRequest) => {
     setCompletionRequest(request);
     setCompletionMileage("");
+    setCompletionCost("");
+    setCompletionNotes("");
     setCompletionError("");
   };
 
@@ -347,6 +389,8 @@ export default function MechanicRequestsPage() {
     if (updatingAction?.status === "completed") return;
     setCompletionRequest(null);
     setCompletionMileage("");
+    setCompletionCost("");
+    setCompletionNotes("");
     setCompletionError("");
   };
 
@@ -372,8 +416,64 @@ export default function MechanicRequestsPage() {
       }
     }
 
+    const trimmedCost = completionCost.trim();
+    let finalCost: number | undefined;
+
+    if (trimmedCost) {
+      finalCost = Number(trimmedCost);
+      if (!Number.isFinite(finalCost) || finalCost < 0) {
+        setCompletionError("Enter a valid service price or leave it blank.");
+        return;
+      }
+    }
+
     setCompletionError("");
-    await handleStatusChange(completionRequest.id, "completed", finalMileage);
+    await handleStatusChange(
+      completionRequest.id,
+      "completed",
+      finalMileage,
+      finalCost,
+      completionNotes
+    );
+  };
+
+  const removeCompletedRequest = async (request: ServiceRequest) => {
+    if (!mechanicId || request.status !== "completed" || removingRequestId) return;
+
+    const confirmed = window.confirm(
+      "Remove this completed appointment from your Repair Requests list? The customer's Garage service history will be kept."
+    );
+    if (!confirmed) return;
+
+    try {
+      setRemovingRequestId(request.id);
+      setError("");
+      setNotice("");
+
+      const params = new URLSearchParams({
+        actor_id: mechanicId,
+        view: "mechanic",
+      });
+      const response = await fetch(
+        `${apiUrl}/api/service-requests/${encodeURIComponent(request.id)}?${params.toString()}`,
+        { method: "DELETE" }
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || "Failed to remove completed request.");
+      }
+
+      setRequests((previous) => previous.filter((item) => item.id !== request.id));
+      setNotice("Completed appointment removed from your list. Garage service history was kept.");
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error
+          ? removeError.message
+          : "Failed to remove completed request."
+      );
+    } finally {
+      setRemovingRequestId(null);
+    }
   };
 
   return (
@@ -513,7 +613,8 @@ export default function MechanicRequestsPage() {
                       ? updatingAction.status
                       : null
                   }
-                  actionsDisabled={Boolean(updatingAction)}
+                  actionsDisabled={Boolean(updatingAction) || Boolean(removingRequestId)}
+                  removing={removingRequestId === request.id}
                   onAccept={() =>
                     void handleStatusChange(request.id, "accepted")
                   }
@@ -521,6 +622,7 @@ export default function MechanicRequestsPage() {
                     void handleStatusChange(request.id, "declined")
                   }
                   onComplete={() => openCompletion(request)}
+                  onRemove={() => void removeCompletedRequest(request)}
                 />
               ))}
             </div>
@@ -540,8 +642,8 @@ export default function MechanicRequestsPage() {
                   Mark appointment completed
                 </h2>
                 <p className="mt-2 text-sm leading-6 text-slate-500">
-                  You can optionally enter the vehicle&apos;s final odometer reading.
-                  If supplied, MotorMate updates the owner&apos;s Garage mileage too.
+                  Add any final mileage, price, or mechanic notes you want saved with this service.
+                  MotorMate will also add the completed job to the owner&apos;s Garage service history.
                 </p>
               </div>
 
@@ -588,6 +690,47 @@ export default function MechanicRequestsPage() {
               />
             </div>
 
+            <label className="mt-5 block text-sm font-semibold text-slate-700">
+              Final service price <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <div className="relative mt-2">
+              <DollarSign
+                size={17}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                inputMode="decimal"
+                value={completionCost}
+                onChange={(event) => {
+                  setCompletionCost(event.target.value);
+                  setCompletionError("");
+                }}
+                placeholder="Leave blank if price is not available"
+                className="w-full rounded-xl border border-slate-300 py-3 pl-11 pr-4 text-sm outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
+              />
+            </div>
+
+            <label className="mt-5 block text-sm font-semibold text-slate-700">
+              Mechanic notes <span className="font-normal text-slate-400">(optional)</span>
+            </label>
+            <div className="relative mt-2">
+              <FileText size={17} className="absolute left-4 top-3.5 text-slate-400" />
+              <textarea
+                value={completionNotes}
+                maxLength={1000}
+                rows={4}
+                onChange={(event) => setCompletionNotes(event.target.value)}
+                placeholder="Work performed, parts used, recommendations, or anything the owner should know"
+                className="w-full resize-none rounded-xl border border-slate-300 py-3 pl-11 pr-4 text-sm outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
+              />
+              <p className="mt-1 text-right text-xs text-slate-400">
+                {completionNotes.length}/1000
+              </p>
+            </div>
+
             {completionError && (
               <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                 {completionError}
@@ -628,16 +771,20 @@ function RequestCard({
   request,
   updatingStatus,
   actionsDisabled,
+  removing,
   onAccept,
   onDecline,
   onComplete,
+  onRemove,
 }: {
   request: ServiceRequest;
   updatingStatus: "accepted" | "declined" | "completed" | null;
   actionsDisabled: boolean;
+  removing: boolean;
   onAccept: () => void;
   onDecline: () => void;
   onComplete: () => void;
+  onRemove: () => void;
 }) {
   const status = statusStyles(request.status);
   const StatusIcon = status.icon;
@@ -708,6 +855,30 @@ function RequestCard({
             </div>
           )}
 
+          {request.status === "completed" &&
+            (request.completed_cost !== undefined || request.completion_notes?.trim()) && (
+              <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                  Completion Details
+                </p>
+                {request.completed_cost !== undefined && (
+                  <p className="mt-2 text-sm text-slate-700">
+                    <span className="font-semibold">Final price:</span>{" "}
+                    {request.completed_cost.toLocaleString(undefined, {
+                      style: "currency",
+                      currency: "USD",
+                    })}
+                  </p>
+                )}
+                {request.completion_notes?.trim() && (
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    <span className="font-semibold">Mechanic notes:</span>{" "}
+                    {request.completion_notes}
+                  </p>
+                )}
+              </div>
+            )}
+
           {request.status_reason && (
             <p className="mt-3 text-sm text-slate-500">
               <span className="font-semibold text-slate-700">Reason:</span>{" "}
@@ -758,6 +929,24 @@ function RequestCard({
             >
               <ClipboardCheck size={15} />
               Mark Completed
+            </button>
+          </div>
+        )}
+
+        {request.status === "completed" && (
+          <div className="flex shrink-0 xl:flex-col">
+            <button
+              type="button"
+              onClick={onRemove}
+              disabled={actionsDisabled}
+              className="inline-flex min-w-28 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {removing ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <Trash2 size={15} />
+              )}
+              Remove
             </button>
           </div>
         )}
