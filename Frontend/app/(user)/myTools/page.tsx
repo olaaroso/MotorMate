@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
 import {
+  ArrowUpRight,
+  BarChart3,
   Bell,
   CalendarDays,
   Camera,
@@ -20,6 +22,7 @@ import {
 } from "lucide-react";
 
 import { auth } from "@/lib/firebase";
+import RentalHandoffControls from "../../../components/RentalHandoffControls";
 
 type ToolListing = {
   id: string;
@@ -62,6 +65,8 @@ type RentalRequest = {
     | "approved"
     | "rejected"
     | "active"
+    | "pickup_pending"
+    | "return_pending"
     | "completed"
     | "cancelled";
   created_at?: string;
@@ -172,6 +177,18 @@ export default function MyToolsPage() {
     return () => unsubscribe();
   }, [apiUrl]);
 
+  const refreshHandoffData = async () => {
+    const user = auth.currentUser;
+    if (!user) return;
+    const response = await fetch(
+      `${apiUrl}/api/diy/rental-requests/owner/${encodeURIComponent(user.uid)}`,
+      { cache: "no-store" }
+    );
+    if (!response.ok) throw new Error("Unable to refresh owner rentals.");
+    const data = await response.json();
+    setRentalRequests(data.results || []);
+  };
+
   // ======================================================
   // GROUP DATA
   // ======================================================
@@ -185,19 +202,21 @@ export default function MyToolsPage() {
   const approvedRentalRequests = rentalRequests.filter(
     (request) =>
       request.status === "approved" ||
-      request.status === "active"
+      request.status === "pickup_pending" ||
+      request.status === "active" ||
+      request.status === "return_pending"
   );
 
   const currentRentalRequests =
     approvedRentalRequests.filter(
       (request) =>
-        request.start_date <= today &&
-        request.end_date >= today
+        (request.status !== "approved" ||
+          (request.start_date <= today && request.end_date >= today))
     );
 
   const upcomingRentalRequests =
     approvedRentalRequests.filter(
-      (request) => request.start_date > today
+      (request) => request.status === "approved" && request.start_date > today
     );
 
   const currentRentalListingIds = new Set(
@@ -943,7 +962,7 @@ export default function MyToolsPage() {
                 </p>
               </div>
 
-              <button
+              {currentRental.status === "approved" && <button
                 type="button"
                 disabled={
                   requestActionId === currentRental.id
@@ -964,10 +983,10 @@ export default function MyToolsPage() {
                 ) : (
                   <>
                     <XCircle size={15} />
-                    Cancel Current Rental
+                    Cancel Uncollected Reservation
                   </>
                 )}
-              </button>
+              </button>}
             </div>
           )}
 
@@ -1044,6 +1063,8 @@ export default function MyToolsPage() {
     <div className="mx-auto max-w-7xl p-8">
       {/* HEADER */}
 
+      
+
       <section className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">
@@ -1069,6 +1090,60 @@ export default function MyToolsPage() {
           List New Tool
         </Link>
       </section>
+
+      {/* RENTAL HISTORY & EARNINGS */}
+      <div className="mt-6 flex flex-col gap-4 rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 to-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-[#001F3F] text-white">
+            <BarChart3 size={23} />
+          </div>
+
+          <div>
+            <h2 className="text-lg font-bold text-[#001F3F]">
+              Rental History &amp; Earnings
+            </h2>
+            <p className="mt-1 max-w-xl text-sm text-gray-600">
+              Review your rental history, booked revenue, rental days, cancellations,
+              and performance across all your tools.
+            </p>
+          </div>
+        </div>
+
+        <Link
+          href="/toolAnalytics"
+          className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#001F3F] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#003366]"
+        >
+          View Analytics
+          <ArrowUpRight size={17} />
+        </Link>
+      </div>
+
+      {/* PICKUP AND RETURN HANDOFFS */}
+      {!rentalRequestsLoading && rentalRequests.some((r) =>
+        r.status === "pickup_pending" || r.status === "return_pending" ||
+        (r.status === "approved" && r.start_date <= today && r.end_date >= today)
+      ) && (
+        <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-bold text-[#001F3F]">Tool Pickup & Drop-off — Owner Actions</h2>
+          <p className="mt-1 text-sm text-gray-500">Only confirm actions you have physically completed. Pickup: hand the tool to the borrower. Drop-off: inspect and accept the returned tool.</p>
+          <div className="mt-4 space-y-3">
+            {rentalRequests.filter((r) =>
+              r.status === "pickup_pending" || r.status === "return_pending" ||
+              (r.status === "approved" && r.start_date <= today && r.end_date >= today)
+            ).map((r) => (
+              <div key={r.id} className="rounded-xl border p-4">
+                <p className="font-semibold text-[#001F3F]">{r.tool_name}</p>
+                <p className="mt-1 text-xs text-gray-500">Borrower: {r.renter_name} · {r.start_date} – {r.end_date}</p>
+                <RentalHandoffControls
+                  rental={r}
+                  role="owner"
+                  onUpdated={refreshHandoffData}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ERROR */}
 
@@ -1470,7 +1545,7 @@ export default function MyToolsPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Approved rentals whose date range includes
+                  Current handoffs, including overdue tools, whose date range includes
                   today.
                 </p>
               </div>
