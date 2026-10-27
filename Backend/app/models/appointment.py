@@ -1,6 +1,14 @@
 from datetime import date as date_type
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
+
+ServiceRequestStatus = Literal[
+    "pending",
+    "accepted",
+    "declined",
+    "completed",
+]
 
 
 class ServiceRequestCreate(BaseModel):
@@ -22,4 +30,19 @@ class ServiceRequestCreate(BaseModel):
     customer_name: str = Field(..., min_length=1, max_length=120)
     vehicle_id: str = Field(..., min_length=1)
     service_requested: str = Field(..., min_length=1, max_length=100)
-    problem_description: str = Field(..., min_length=10, max_length=1000)
+    problem_description: str = Field(default="", max_length=1000)
+
+
+class ServiceRequestStatusUpdate(BaseModel):
+    """Mechanic action for a service request lifecycle update."""
+
+    mechanic_id: str = Field(..., min_length=1)
+    status: Literal["accepted", "declined", "completed"]
+    completed_mileage: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Optional final odometer reading when marking an accepted request "
+            "completed. If supplied, the owner's Garage vehicle is updated too."
+        ),
+    )

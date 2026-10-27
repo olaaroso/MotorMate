@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class UserBase(BaseModel):
@@ -25,19 +25,29 @@ class UserBase(BaseModel):
 
 class MechanicProfile(BaseModel):
     """
-    Shop/business profile for a mechanic, keyed by the Firebase Auth UID
-    (owner_id). Decoupled from UserBase since it is not tied to the
-    (currently unused) backend auth/role system.
+    Shop/business profile for a mechanic, keyed by the Firebase Auth UID.
+
+    New profiles use structured location fields. `address` remains optional only
+    so older clients/records can still be read while the project transitions.
+    New saves from the current frontend use street_address/city/state/zip_code.
     """
 
     owner_id: str
     shop_name: str
-    address: str
+    street_address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = Field(default=None, min_length=2, max_length=2)
+    zip_code: Optional[str] = Field(default=None, pattern=r"^\d{5}$")
+    address: Optional[str] = None
     phone: Optional[str] = None
     services_offered: List[str] = Field(default_factory=list)
     price_per_hour: Optional[float] = Field(None, ge=0)
     operating_hours: Optional[Dict[str, str]] = None
-    rating: float = Field(default=5.0, ge=0, le=5)
+
+    @field_validator("state")
+    @classmethod
+    def normalize_state(cls, value: Optional[str]) -> Optional[str]:
+        return value.strip().upper() if value else value
 
 
 class DIYPeerProfile(UserBase):

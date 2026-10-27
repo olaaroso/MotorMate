@@ -1,8 +1,10 @@
 "use client";
 
+// MotorMate mechanic detail: clean route/load version.
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import {
@@ -16,7 +18,6 @@ import {
   MapPin,
   Phone,
   Send,
-  Star,
   Store,
   Wrench,
 } from "lucide-react";
@@ -24,23 +25,25 @@ import {
 import { auth, db } from "@/lib/firebase";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
 const OTHER_SERVICE = "Other / Not sure";
 
 type MechanicProfile = {
   owner_id: string;
   shop_name?: string;
+  street_address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
   address?: string;
   phone?: string | null;
   services_offered?: string[];
   price_per_hour?: number | null;
   operating_hours?: Record<string, string> | null;
-  rating?: number;
 };
 
 type AppointmentWindow = {
-  start: string; // "HH:MM" (24-hour)
-  end: string; // "HH:MM" (24-hour)
+  start: string;
+  end: string;
 };
 
 type DayWindows = {
@@ -121,19 +124,31 @@ function groupHours(hours?: Record<string, string> | null) {
   if (!hours || !DAYS.some((day) => hours[day]?.trim())) return [];
 
   const groups: { start: string; end: string; time: string }[] = [];
-
   for (const day of DAYS) {
     const time = hours[day]?.trim() || "Closed";
     const last = groups[groups.length - 1];
-
     if (last && last.time === time) {
       last.end = day;
     } else {
       groups.push({ start: day, end: day, time });
     }
   }
-
   return groups;
+}
+
+function formatAddress(profile: MechanicProfile) {
+  const street = profile.street_address?.trim() || "";
+  const city = profile.city?.trim() || "";
+  const state = profile.state?.trim().toUpperCase() || "";
+  const zip = profile.zip_code?.trim() || "";
+
+  if (street || city || state || zip) {
+    const locality = [state, zip].filter(Boolean).join(" ");
+    const cityLine = [city, locality].filter(Boolean).join(", ");
+    return [street, cityLine].filter(Boolean).join(", ");
+  }
+
+  return profile.address?.trim() || "";
 }
 
 function toGarageVehicle(raw: RawVehicle): GarageVehicle | null {
@@ -144,7 +159,6 @@ function toGarageVehicle(raw: RawVehicle): GarageVehicle | null {
   const make = raw.make || raw.Make || "";
   const model = raw.model || raw.Model || "";
   const mileage = Number(raw.current_mileage) || 0;
-
   const name = [year, make, model].filter(Boolean).join(" ") || "Vehicle";
 
   return {
@@ -164,15 +178,34 @@ async function fetchWindows(mechanicId: string, date: string): Promise<DayWindow
   }
 
   return {
-    open: !!data.open,
+    open: Boolean(data.open),
     hours: data.hours ?? null,
     windows: data.windows || [],
   };
 }
 
+async function fetchMechanicProfile(mechanicId: string): Promise<MechanicProfile> {
+  const response = await fetch(
+    `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}`
+  );
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      response.status === 404
+        ? "This shop could not be found."
+        : data.detail || "Failed to load this shop."
+    );
+  }
+
+  return data.profile as MechanicProfile;
+}
+
 export default function MechanicDetailPage() {
-  const params = useParams();
+  const params = useParams<{ mechanicId: string }>();
+  const searchParams = useSearchParams();
   const mechanicId = decodeURIComponent(String(params.mechanicId || ""));
+  const preselectedService = searchParams.get("service")?.trim() || "";
 
   const [profile, setProfile] = useState<MechanicProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -197,54 +230,52 @@ export default function MechanicDetailPage() {
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  // Shop profile
   useEffect(() => {
     if (!mechanicId) return;
 
     let cancelled = false;
 
-    (async () => {
-      try {
-        const profileResponse = await fetch(
-          `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}`
-        );
-        const profileData = await profileResponse.json().catch(() => ({}));
+    fetchMechanicProfile(mechanicId)
+      .then((loadedProfile) => {
+        if (cancelled) return;
 
-        if (!profileResponse.ok) {
-          throw new Error(
-            profileResponse.status === 404
-              ? "This shop could not be found."
-              : profileData.detail || "Failed to load this shop."
+        setProfile(loadedProfile);
+
+        if (preselectedService) {
+          const match = (loadedProfile.services_offered || []).find(
+            (service) =>
+              service.toLowerCase() === preselectedService.toLowerCase()
           );
-        }
 
-        if (!cancelled) setProfile(profileData.profile);
-      } catch (err) {
-        console.error("Failed to load mechanic:", err);
-        if (!cancelled) {
-          setLoadError(err instanceof Error ? err.message : "Failed to load this shop.");
+          if (match) {
+            setServiceRequested(match);
+          }
         }
-      } finally {
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to load mechanic:", err);
+        setLoadError(
+          err instanceof Error ? err.message : "Failed to load this shop."
+        );
+      })
+      .finally(() => {
         if (!cancelled) setLoading(false);
-      }
-    })();
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [mechanicId]);
+  }, [mechanicId, preselectedService]);
 
-  // Generated 30-minute windows for the chosen date
   useEffect(() => {
     if (!mechanicId || !appointmentDate) return;
 
     let cancelled = false;
-
     (async () => {
       try {
         setWindowsLoading(true);
         setWindowsError("");
-
         const result = await fetchWindows(mechanicId, appointmentDate);
 
         if (!cancelled) {
@@ -272,7 +303,6 @@ export default function MechanicDetailPage() {
     };
   }, [mechanicId, appointmentDate, windowsRefresh]);
 
-  // Signed-in customer: name (Firestore) + saved vehicles (Garage API)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
@@ -297,7 +327,6 @@ export default function MechanicDetailPage() {
         );
 
         const vehiclesData = await vehiclesResponse.json().catch(() => ({}));
-
         if (!vehiclesResponse.ok) {
           throw new Error(vehiclesData.detail || "Failed to load your vehicles.");
         }
@@ -323,10 +352,10 @@ export default function MechanicDetailPage() {
     return () => unsubscribe();
   }, []);
 
-  const isOwnShop = !!currentUserId && currentUserId === mechanicId;
   const services = profile?.services_offered || [];
   const hours = groupHours(profile?.operating_hours);
-  const acceptsRequests = hours.length > 0;
+  const isOwnShop = Boolean(currentUserId && currentUserId === mechanicId);
+  const acceptsRequests = hours.length > 0 && services.length > 0;
   const selectedWindow =
     dayWindows?.windows.find((window) => window.start === selectedStart) || null;
 
@@ -337,37 +366,27 @@ export default function MechanicDetailPage() {
       setSubmitError("You must be signed in to request an appointment.");
       return;
     }
-
     if (!customerName) {
       setSubmitError(
         "Add your first and last name in Account Settings before requesting an appointment."
       );
       return;
     }
-
     if (!appointmentDate || !selectedWindow) {
       setSubmitError("Choose an appointment date and time.");
       return;
     }
-
     if (!selectedVehicleId) {
       setSubmitError("Choose the vehicle that needs service.");
       return;
     }
-
     if (!serviceRequested) {
       setSubmitError("Choose the service you need.");
       return;
     }
 
-    if (problemDescription.trim().length < 10) {
-      setSubmitError("Describe the problem in at least 10 characters.");
-      return;
-    }
-
     try {
       setSubmitting(true);
-
       const response = await fetch(`${apiUrl}/api/service-requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -385,11 +404,9 @@ export default function MechanicDetailPage() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        // Hours may have changed or the time may have passed; refresh.
         if (response.status === 400 || response.status === 409) {
           setWindowsRefresh((count) => count + 1);
         }
-
         throw new Error(data.detail || "Unable to submit your request.");
       }
 
@@ -431,7 +448,7 @@ export default function MechanicDetailPage() {
     profile.price_per_hour !== undefined && profile.price_per_hour !== null
       ? `$${profile.price_per_hour}/hr`
       : "Rate not listed";
-
+  const address = formatAddress(profile);
   const formDisabled = submitting || submitSuccess;
 
   return (
@@ -439,61 +456,46 @@ export default function MechanicDetailPage() {
       <BackLink />
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[1.4fr_1fr]">
-        {/* SHOP DETAILS */}
         <div className="space-y-6">
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_8px_30px_rgba(15,23,42,0.04)]">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-start gap-4">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[#001F3F]">
-                  <Store size={26} />
-                </div>
-
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">
-                    Repair Shop
-                  </p>
-                  <h1 className="mt-1 text-3xl font-bold text-[#001F3F]">
-                    {profile.shop_name || "Unnamed Shop"}
-                  </h1>
-
-                  <div className="mt-3 space-y-1.5 text-sm text-slate-500">
-                    {profile.address && (
-                      <p className="flex items-start gap-2">
-                        <MapPin size={16} className="mt-0.5 shrink-0" />
-                        {profile.address}
-                      </p>
-                    )}
-                    {profile.phone && (
-                      <p className="flex items-center gap-2">
-                        <Phone size={16} className="shrink-0" />
-                        {profile.phone}
-                      </p>
-                    )}
-                  </div>
+            <div className="flex items-start gap-4">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[#001F3F]">
+                <Store size={26} />
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">
+                  Repair Shop
+                </p>
+                <h1 className="mt-1 text-3xl font-bold text-[#001F3F]">
+                  {profile.shop_name || "Unnamed Shop"}
+                </h1>
+                <div className="mt-3 space-y-1.5 text-sm text-slate-500">
+                  {address && (
+                    <p className="flex items-start gap-2">
+                      <MapPin size={16} className="mt-0.5 shrink-0" />
+                      {address}
+                    </p>
+                  )}
+                  {profile.phone && (
+                    <p className="flex items-center gap-2">
+                      <Phone size={16} className="shrink-0" />
+                      {profile.phone}
+                    </p>
+                  )}
                 </div>
               </div>
-
-              {typeof profile.rating === "number" && (
-                <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">
-                  <Star size={14} className="fill-amber-400 text-amber-400" />
-                  {profile.rating.toFixed(1)}
-                </span>
-              )}
             </div>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                 <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  <DollarSign size={14} />
-                  Labor Rate
+                  <DollarSign size={14} /> Labor Rate
                 </p>
                 <p className="mt-1 text-lg font-bold text-slate-800">{laborRate}</p>
               </div>
-
               <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-4">
                 <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
-                  <Clock size={14} />
-                  Hours
+                  <Clock size={14} /> Hours
                 </p>
                 {hours.length === 0 ? (
                   <p className="mt-1 text-sm text-slate-500">Hours not listed</p>
@@ -506,11 +508,7 @@ export default function MechanicDetailPage() {
                             ? DAY_LABELS[group.start]
                             : `${DAY_LABELS[group.start]} – ${DAY_LABELS[group.end]}`}
                         </span>
-                        <span
-                          className={
-                            group.time === "Closed" ? "italic text-slate-400" : "text-slate-500"
-                          }
-                        >
+                        <span className={group.time === "Closed" ? "italic text-slate-400" : "text-slate-500"}>
                           {group.time}
                         </span>
                       </div>
@@ -523,19 +521,14 @@ export default function MechanicDetailPage() {
 
           <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_8px_30px_rgba(15,23,42,0.04)]">
             <h2 className="flex items-center gap-2 text-lg font-bold text-[#001F3F]">
-              <Wrench size={18} />
-              Services Offered
+              <Wrench size={18} /> Services Offered
             </h2>
-
             {services.length === 0 ? (
               <p className="mt-3 text-sm text-slate-500">No services listed.</p>
             ) : (
               <div className="mt-4 flex flex-wrap gap-2">
                 {services.map((service) => (
-                  <span
-                    key={service}
-                    className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-[#001F3F]"
-                  >
+                  <span key={service} className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-[#001F3F]">
                     {service}
                   </span>
                 ))}
@@ -544,7 +537,6 @@ export default function MechanicDetailPage() {
           </section>
         </div>
 
-        {/* REQUEST PANEL */}
         <aside>
           <section className="sticky top-28 rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_8px_30px_rgba(15,23,42,0.04)]">
             <h2 className="text-xl font-bold text-[#001F3F]">Request an Appointment</h2>
@@ -565,9 +557,12 @@ export default function MechanicDetailPage() {
                 <div>
                   <p className="font-semibold">Request sent</p>
                   <p className="mt-1 text-sm">
-                    {formatLongDate(appointmentDate)} • {formatWindow(selectedWindow)}.
-                    Status: <span className="font-semibold">Pending</span> until the shop responds.
+                    {formatLongDate(appointmentDate)} • {formatWindow(selectedWindow)}. Status:{" "}
+                    <span className="font-semibold">Pending</span> until the shop responds.
                   </p>
+                  <Link href="/appointments" className="mt-2 inline-block text-sm font-semibold underline">
+                    View My Appointments
+                  </Link>
                 </div>
               </div>
             )}
@@ -587,29 +582,23 @@ export default function MechanicDetailPage() {
 
             {!isOwnShop && !acceptsRequests && (
               <div className="mt-5 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 p-4 text-sm text-slate-500">
-                This shop hasn&apos;t listed its operating hours, so it isn&apos;t
-                accepting online appointment requests yet.
+                This shop needs both services and operating hours before it can accept online requests.
               </div>
             )}
 
             {!isOwnShop && acceptsRequests && (
               <div className="mt-6 space-y-6">
-                {/* DATE + TIME */}
                 <div>
-                  <label
-                    htmlFor="appointment-date"
-                    className="flex items-center gap-2 text-sm font-semibold text-slate-700"
-                  >
-                    <CalendarDays size={16} className="text-[#001F3F]" />
-                    Appointment Date
+                  <label htmlFor="appointment-date" className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <CalendarDays size={16} className="text-[#001F3F]" /> Appointment Date
                   </label>
                   <input
                     id="appointment-date"
                     type="date"
                     min={getLocalToday()}
                     value={appointmentDate}
-                    onChange={(e) => {
-                      setAppointmentDate(e.target.value);
+                    onChange={(event) => {
+                      setAppointmentDate(event.target.value);
                       setSelectedStart("");
                       setDayWindows(null);
                       setSubmitError("");
@@ -621,15 +610,12 @@ export default function MechanicDetailPage() {
                   {appointmentDate && (
                     <div className="mt-4">
                       <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                        <Clock size={16} className="text-[#001F3F]" />
-                        Appointment Time
+                        <Clock size={16} className="text-[#001F3F]" /> Appointment Time
                         <span className="font-normal text-slate-400">(30 min)</span>
                       </p>
-
                       {windowsLoading ? (
                         <p className="mt-3 flex items-center text-sm text-slate-400">
-                          <Loader2 size={16} className="mr-2 animate-spin" />
-                          Loading times...
+                          <Loader2 size={16} className="mr-2 animate-spin" /> Loading times...
                         </p>
                       ) : windowsError ? (
                         <p className="mt-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -645,31 +631,26 @@ export default function MechanicDetailPage() {
                         </p>
                       ) : dayWindows ? (
                         <>
-                          <p className="mt-1 text-xs text-slate-400">
-                            Shop hours: {dayWindows.hours}
-                          </p>
+                          <p className="mt-1 text-xs text-slate-400">Shop hours: {dayWindows.hours}</p>
                           <div className="mt-3 grid max-h-64 grid-cols-2 gap-2 overflow-y-auto pr-1">
-                            {dayWindows.windows.map((window) => {
-                              const selected = window.start === selectedStart;
-                              return (
-                                <button
-                                  key={window.start}
-                                  type="button"
-                                  disabled={formDisabled}
-                                  onClick={() => {
-                                    setSelectedStart(window.start);
-                                    setSubmitError("");
-                                  }}
-                                  className={`rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed ${
-                                    selected
-                                      ? "border-[#001F3F] bg-[#001F3F] text-white"
-                                      : "border-slate-200 bg-white text-slate-700 hover:border-[#001F3F] hover:bg-blue-50"
-                                  }`}
-                                >
-                                  {formatWindow(window)}
-                                </button>
-                              );
-                            })}
+                            {dayWindows.windows.map((window) => (
+                              <button
+                                key={window.start}
+                                type="button"
+                                disabled={formDisabled}
+                                onClick={() => {
+                                  setSelectedStart(window.start);
+                                  setSubmitError("");
+                                }}
+                                className={`rounded-lg border px-3 py-2 text-sm font-medium transition disabled:cursor-not-allowed ${
+                                  window.start === selectedStart
+                                    ? "border-[#001F3F] bg-[#001F3F] text-white"
+                                    : "border-slate-200 bg-white text-slate-700 hover:border-[#001F3F] hover:bg-blue-50"
+                                }`}
+                              >
+                                {formatWindow(window)}
+                              </button>
+                            ))}
                           </div>
                         </>
                       ) : null}
@@ -677,20 +658,17 @@ export default function MechanicDetailPage() {
                   )}
                 </div>
 
-                {/* VEHICLE */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <Car size={16} className="text-[#001F3F]" />
-                    Vehicle
+                    <Car size={16} className="text-[#001F3F]" /> Vehicle
                   </label>
-
                   {authLoading ? (
                     <p className="mt-2 text-sm text-slate-400">Loading your vehicles...</p>
                   ) : !currentUserId ? (
                     <p className="mt-2 text-sm text-slate-500">Sign in to choose a vehicle.</p>
                   ) : vehicles.length === 0 ? (
                     <div className="mt-2 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-500">
-                      You don&apos;t have any saved vehicles.{" "}
+                      You don&apos;t have any saved vehicles. {" "}
                       <Link href="/garage" className="font-semibold text-[#001F3F] underline">
                         Add one in My Garage
                       </Link>
@@ -698,59 +676,52 @@ export default function MechanicDetailPage() {
                   ) : (
                     <select
                       value={selectedVehicleId}
-                      onChange={(e) => setSelectedVehicleId(e.target.value)}
+                      onChange={(event) => setSelectedVehicleId(event.target.value)}
                       disabled={formDisabled}
                       className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
                     >
                       <option value="">Select a vehicle</option>
                       {vehicles.map((vehicle) => (
-                        <option key={vehicle.id} value={vehicle.id}>
-                          {vehicle.label}
-                        </option>
+                        <option key={vehicle.id} value={vehicle.id}>{vehicle.label}</option>
                       ))}
                     </select>
                   )}
                 </div>
 
-                {/* SERVICE */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <Wrench size={16} className="text-[#001F3F]" />
-                    Service Needed
+                    <Wrench size={16} className="text-[#001F3F]" /> Service Needed
                   </label>
                   <select
                     value={serviceRequested}
-                    onChange={(e) => setServiceRequested(e.target.value)}
+                    onChange={(event) => setServiceRequested(event.target.value)}
                     disabled={formDisabled}
                     className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
                   >
                     <option value="">Select a service</option>
-                    {services.map((service) => (
-                      <option key={service} value={service}>
-                        {service}
-                      </option>
-                    ))}
-                    <option value={OTHER_SERVICE}>{OTHER_SERVICE}</option>
+                    <optgroup label="Services offered by this shop">
+                      {services.map((service) => (
+                        <option key={service} value={service}>{service}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Other">
+                      <option value={OTHER_SERVICE}>{OTHER_SERVICE}</option>
+                    </optgroup>
                   </select>
                 </div>
 
-                {/* DESCRIPTION */}
                 <div>
-                  <label className="text-sm font-semibold text-slate-700">
-                    Describe the problem
-                  </label>
+                  <label className="text-sm font-semibold text-slate-700">Describe the problem <span className="font-normal text-slate-400">(optional)</span></label>
                   <textarea
                     rows={4}
                     maxLength={1000}
                     value={problemDescription}
-                    onChange={(e) => setProblemDescription(e.target.value)}
+                    onChange={(event) => setProblemDescription(event.target.value)}
                     disabled={formDisabled}
-                    placeholder="e.g. Grinding noise from the front wheels when braking."
+                    placeholder="Optional: describe any symptoms, noises, warning lights, or other details."
                     className="mt-2 w-full resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
                   />
-                  <p className="mt-1 text-right text-xs text-slate-400">
-                    {problemDescription.length}/1000
-                  </p>
+                  <p className="mt-1 text-right text-xs text-slate-400">{problemDescription.length}/1000</p>
                 </div>
 
                 <button
@@ -761,26 +732,16 @@ export default function MechanicDetailPage() {
                     authLoading ||
                     !selectedWindow ||
                     !selectedVehicleId ||
-                    !serviceRequested ||
-                    problemDescription.trim().length < 10
+                    !serviceRequested
                   }
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#001F3F] py-3.5 font-semibold text-white transition hover:bg-[#003366] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? (
-                    <>
-                      <Loader2 size={18} className="animate-spin" />
-                      Sending Request...
-                    </>
+                    <><Loader2 size={18} className="animate-spin" /> Sending Request...</>
                   ) : submitSuccess ? (
-                    <>
-                      <CheckCircle2 size={18} />
-                      Request Sent
-                    </>
+                    <><CheckCircle2 size={18} /> Request Sent</>
                   ) : (
-                    <>
-                      <Send size={18} />
-                      Submit Request
-                    </>
+                    <><Send size={18} /> Submit Request</>
                   )}
                 </button>
               </div>
@@ -798,8 +759,7 @@ function BackLink() {
       href="/mechanics"
       className="inline-flex items-center gap-2 text-sm font-semibold text-gray-500 transition hover:text-[#001F3F]"
     >
-      <ArrowLeft size={17} />
-      Back to Find Mechanics
+      <ArrowLeft size={17} /> Back to Find Mechanics
     </Link>
   );
 }
