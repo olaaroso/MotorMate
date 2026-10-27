@@ -9,6 +9,21 @@ from app.services.location_service import LocationProviderError, location_servic
 router = APIRouter(prefix="/api/location", tags=["Location"])
 
 
+def format_mechanic_address(document: dict) -> str:
+    """Build a display address from structured fields, with legacy fallback."""
+    street = str(document.get("street_address") or "").strip()
+    city = str(document.get("city") or "").strip()
+    state = str(document.get("state") or "").strip().upper()
+    zip_code = str(document.get("zip_code") or "").strip()
+
+    if street or city or state or zip_code:
+        locality = " ".join(part for part in (state, zip_code) if part)
+        city_line = ", ".join(part for part in (city, locality) if part)
+        return ", ".join(part for part in (street, city_line) if part)
+
+    return str(document.get("address") or "").strip()
+
+
 @router.get("/nearest-mechanics")
 async def nearest_mechanics(
     address: str = Query(..., min_length=3, max_length=200, description="Customer's address or postal code"),
@@ -58,6 +73,10 @@ async def nearest_mechanics(
                     "$project": {
                         "shop_name": 1,
                         "address": 1,
+                        "street_address": 1,
+                        "city": 1,
+                        "state": 1,
+                        "zip_code": 1,
                         "services_offered": 1,
                         "price_per_hour": 1,
                         "distance_meters": 1,
@@ -73,7 +92,7 @@ async def nearest_mechanics(
         {
             "mechanic_id": str(mechanic["_id"]),
             "shop_name": mechanic.get("shop_name"),
-            "address": mechanic.get("address"),
+            "address": format_mechanic_address(mechanic),
             "services": mechanic.get("services_offered", []),
             "price_per_hour": mechanic.get("price_per_hour"),
             "distance_km": round(mechanic["distance_meters"] / 1000, 2),

@@ -7,6 +7,7 @@ import {
   CalendarDays,
   Car,
   ChevronRight,
+  ClipboardList,
   Hammer,
   LayoutDashboard,
   MapPin,
@@ -34,6 +35,11 @@ const links = [
     name: "Find Mechanics",
     href: "/mechanics",
     icon: MapPin,
+  },
+  {
+    name: "My Appointments",
+    href: "/appointments",
+    icon: ClipboardList,
   },
   {
     name: "ToolDrop",
@@ -73,9 +79,7 @@ export default function UserSidebar() {
         </div>
 
         <div className="hidden lg:block">
-          <p className="text-lg font-bold tracking-tight">
-            MotorMate
-          </p>
+          <p className="text-lg font-bold tracking-tight">MotorMate</p>
 
           <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-white/45">
             One Stop Shop
@@ -94,9 +98,7 @@ export default function UserSidebar() {
           const active =
             pathname === link.href ||
             (link.href !== "/userDashboard" &&
-              pathname.startsWith(
-                `${link.href}/`
-              ));
+              pathname.startsWith(`${link.href}/`));
 
           return (
             <Link
@@ -119,9 +121,7 @@ export default function UserSidebar() {
                 <Icon size={17} />
               </div>
 
-              <span className="hidden flex-1 lg:block">
-                {link.name}
-              </span>
+              <span className="hidden flex-1 lg:block">{link.name}</span>
 
               {active && (
                 <ChevronRight
@@ -139,13 +139,10 @@ export default function UserSidebar() {
           <Wrench size={17} />
         </div>
 
-        <p className="mt-4 text-sm font-semibold">
-          Vehicle care, simplified.
-        </p>
+        <p className="mt-4 text-sm font-semibold">Vehicle care, simplified.</p>
 
         <p className="mt-1 text-xs leading-5 text-white/50">
-          Garage, maintenance, mechanics, and tools
-          in one place.
+          Garage, maintenance, mechanics, and tools in one place.
         </p>
       </div>
     </aside>
