@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 
 import { auth } from "@/lib/firebase";
-import RentalHandoffControls from "@/components/RentalHandoffControls";
+import RentalHandoffControls from "../../../components/RentalHandoffControls";
 
 type ToolListing = {
   id: string;
@@ -1124,8 +1124,8 @@ export default function MyToolsPage() {
         (r.status === "approved" && r.start_date <= today && r.end_date >= today)
       ) && (
         <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-bold text-[#001F3F]">Pickup & Return Confirmations</h2>
-          <p className="mt-1 text-sm text-gray-500">Confirm handoffs here. The borrower must acknowledge pickup and submit return separately.</p>
+          <h2 className="text-lg font-bold text-[#001F3F]">Tool Pickup & Drop-off — Owner Actions</h2>
+          <p className="mt-1 text-sm text-gray-500">Only confirm actions you have physically completed. Pickup: hand the tool to the borrower. Drop-off: inspect and accept the returned tool.</p>
           <div className="mt-4 space-y-3">
             {rentalRequests.filter((r) =>
               r.status === "pickup_pending" || r.status === "return_pending" ||
@@ -1545,7 +1545,7 @@ export default function MyToolsPage() {
                 </h2>
 
                 <p className="mt-1 text-sm text-gray-500">
-                  Approved rentals whose date range includes
+                  Current handoffs, including overdue tools, whose date range includes
                   today.
                 </p>
               </div>

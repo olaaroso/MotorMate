@@ -737,46 +737,25 @@ async def get_listing(
         )
 
         reserved_ranges = []
-
-        reservations_cursor = (
-            rental_requests_collection.find(
-                {
-                    "listing_id": listing_id,
-                    "status": {
-                        "$in": [
-                            "approved",
-                            "pickup_pending",
-                            "active",
-                            "return_pending",
-                        ]
-                    },
-                    "end_date": {
-                        "$gte": date.today().isoformat(),
-                    },
-                }
-            )
-            .sort(
-                "start_date",
-                1,
-            )
-        )
+        today = date.today().isoformat()
+        reservations_cursor = rental_requests_collection.find({
+            "listing_id": listing_id,
+            "$or": [
+                {"status": {"$in": ["active", "return_pending"]}},
+                {"status": {"$in": ["approved", "pickup_pending"]},
+                 "end_date": {"$gte": today}},
+            ],
+        }).sort("start_date", 1)
 
         async for reservation in reservations_cursor:
-            reserved_ranges.append(
-                {
-                    "request_id": str(
-                        reservation["_id"]
-                    ),
-                    "start_date": reservation.get(
-                        "start_date",
-                        "",
-                    ),
-                    "end_date": reservation.get(
-                        "end_date",
-                        "",
-                    ),
-                }
-            )
+            # Unreturned tools must remain blocked even after the booked
+            # end date. The calendar treats this as an open-ended hold.
+            unreturned = reservation.get("status") in ("active", "return_pending")
+            reserved_ranges.append({
+                "request_id": str(reservation["_id"]),
+                "start_date": today if unreturned else reservation.get("start_date", ""),
+                "end_date": "9999-12-31" if unreturned else reservation.get("end_date", ""),
+            })
 
         return {
 
@@ -969,6 +948,12 @@ async def update_listing(
         exclude_none=True
 
     )
+
+    # Keep the owner's manual preference separate from rental possession.
+    # A deliberately disabled listing must stay disabled after a return.
+    if "availability" in updates:
+        updates["owner_disabled"] = updates["availability"] == "unavailable"
+
 
 
 
@@ -1481,6 +1466,18 @@ async def create_rental_request(
 
         # If these dates already overlap an approved/active
         # rental, the dates are not available.
+        # A tool still in someone's possession cannot accept new bookings,
+        # even when its original rental dates are already in the past.
+        unreturned_tool = await rental_requests_collection.find_one({
+            "listing_id": payload.listing_id,
+            "status": {"$in": ["active", "return_pending"]},
+        })
+        if unreturned_tool:
+            raise HTTPException(
+                status_code=409,
+                detail="This tool has not been returned yet. New rentals are temporarily blocked.",
+            )
+
         approved_conflict = (
             await rental_requests_collection.find_one(
                 {
@@ -2175,6 +2172,19 @@ async def approve_rental_request(
 
         # A tool can have multiple approved rentals as long
         # as their date ranges do not overlap.
+        # A tool still in someone's possession cannot accept new bookings,
+        # even when its original rental dates are already in the past.
+        unreturned_tool = await rental_requests_collection.find_one({
+            "listing_id": listing_id,
+                "_id": {"$ne": ObjectId(request_id)},
+            "status": {"$in": ["active", "return_pending"]},
+        })
+        if unreturned_tool:
+            raise HTTPException(
+                status_code=409,
+                detail="This tool has not been returned yet. New rentals are temporarily blocked.",
+            )
+
         approved_conflict = (
             await rental_requests_collection.find_one(
                 {
@@ -2574,7 +2584,7 @@ async def owner_confirm_pickup(request_id: str, owner_id: str, payload: Conditio
     result = await rentals.find_one_and_update(
         {
             "_id": ObjectId(request_id), "owner_id": owner_id.strip(),
-            "status": "approved",
+            "status": "approved", "handoff_issue_open": {"$ne": True},
             "start_date": {"$lte": date.today().isoformat()},
             "end_date": {"$gte": date.today().isoformat()},
         },
@@ -2599,7 +2609,7 @@ async def borrower_confirm_pickup(request_id: str, renter_id: str, payload: Cond
     rentals = get_rental_requests_collection()
     now = datetime.now(timezone.utc).isoformat()
     result = await rentals.find_one_and_update(
-        {"_id": ObjectId(request_id), "renter_id": renter_id.strip(), "status": "pickup_pending"},
+        {"_id": ObjectId(request_id), "renter_id": renter_id.strip(), "status": "pickup_pending", "handoff_issue_open": {"$ne": True}},
         {"$set": {"status": "active", "pickup_borrower_confirmed_at": now,
                   "pickup_borrower_evidence": evidence}},
         return_document=True,
@@ -2627,7 +2637,7 @@ async def borrower_request_return(request_id: str, renter_id: str, payload: Cond
     if not result:
         raise HTTPException(409, "Only picked-up tools can be submitted for return.")
     await _notify_handoff(result.get("owner_id", ""), "Tool Return Awaiting Confirmation",
-                          f"The borrower says {result.get('tool_name', 'your tool')} has been returned. Please inspect and confirm.")
+                          f"The borrower says {result.get('tool_name', 'your tool')} has been returned. Please inspect and confirm; any open dispute remains recorded.")
     return {"request": serialize_mongo_document(result)}
 
 
@@ -2646,9 +2656,78 @@ async def owner_confirm_return(request_id: str, owner_id: str, payload: Conditio
     )
     if not result:
         raise HTTPException(409, "The borrower must submit the return before the owner confirms it.")
+
+    # A completed handoff releases the rental hold. Older code sometimes
+    # left listing.availability set to unavailable/rented; repair that only
+    # when the owner has not explicitly disabled the listing.
+    listing_id = result.get("listing_id", "")
+    if ObjectId.is_valid(str(listing_id)):
+        await get_tools_collection().update_one(
+            {
+                "_id": ObjectId(str(listing_id)),
+                "owner_id": owner_id.strip(),
+                "owner_disabled": {"$ne": True},
+                "availability": {"$in": ["unavailable", "rented"]},
+            },
+            {"$set": {"availability": "available"}},
+        )
+
     await _notify_handoff(result.get("renter_id", ""), "Tool Return Completed",
-                          f"The owner confirmed the return of {result.get('tool_name', 'your tool')}.")
+                          f"The owner confirmed the physical return of {result.get('tool_name', 'your tool')}. Any reported issue remains open for follow-up.")
     return {"request": serialize_mongo_document(result)}
+
+
+# =========================================================
+# RECOVERY: UNDO UNACKNOWLEDGED PICKUP & FLAG HANDOFF ISSUES
+# =========================================================
+
+class HandoffIssue(BaseModel):
+    reason: str = Field(..., min_length=5, max_length=1000)
+
+
+@router.patch("/rental-requests/{request_id}/pickup/undo-owner")
+async def undo_owner_pickup(request_id: str, owner_id: str):
+    if not ObjectId.is_valid(request_id) or not owner_id.strip():
+        raise HTTPException(400, "Valid rental ID and owner_id required.")
+    rentals = get_rental_requests_collection()
+    now = datetime.now(timezone.utc).isoformat()
+    updated = await rentals.find_one_and_update(
+        {"_id": ObjectId(request_id), "owner_id": owner_id.strip(),
+         "status": "pickup_pending"},
+        {"$set": {"status": "approved", "pickup_undone_at": now,
+                  "handoff_issue_open": False},
+         "$unset": {"pickup_owner_confirmed_at": "", "pickup_owner_evidence": ""}},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(409, "Pickup cannot be undone after borrower confirmation.")
+    await _notify_handoff(updated.get("renter_id", ""), "Pickup Confirmation Withdrawn",
+                          f"The owner withdrew the handoff confirmation for {updated.get('tool_name','your tool')}. Your reservation is approved again.")
+    return {"request": serialize_mongo_document(updated)}
+
+
+@router.patch("/rental-requests/{request_id}/handoff/report")
+async def report_handoff_issue(request_id: str, role: str, user_id: str, payload: HandoffIssue):
+    if not ObjectId.is_valid(request_id) or role not in ("owner", "borrower") or not user_id.strip():
+        raise HTTPException(400, "Invalid rental ID, role, or user ID.")
+    rentals = get_rental_requests_collection()
+    identity_field = "owner_id" if role == "owner" else "renter_id"
+    now = datetime.now(timezone.utc).isoformat()
+    updated = await rentals.find_one_and_update(
+        {"_id": ObjectId(request_id), identity_field: user_id.strip(),
+         "status": {"$in": ["pickup_pending", "active", "return_pending"]},
+         "handoff_issue_open": {"$ne": True}},
+        {"$set": {"handoff_issue_open": True,
+                  "handoff_issue": {"reported_by": role, "reason": payload.reason.strip(),
+                                    "reported_at": now}}},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(409, "No eligible handoff to report or an issue is already open.")
+    other = updated.get("renter_id" if role == "owner" else "owner_id", "")
+    await _notify_handoff(other, "Rental Handoff Problem Reported",
+                          f"A handoff problem was reported for {updated.get('tool_name','your tool')}. Review the rental details before proceeding.")
+    return {"request": serialize_mongo_document(updated)}
 
 
 # =========================================================
