@@ -1,12 +1,13 @@
 import re
 from datetime import date
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import require_role
 from app.core.database import db_instance
 from app.models.user import MechanicProfile
+from app.services.location_service import LocationProviderError, location_service
 from app.services.scheduling import remove_past_windows, windows_for_date
 
 router = APIRouter(prefix="/api/mechanics", tags=["Mechanic Matching"])
@@ -25,7 +26,7 @@ def get_service_requests_collection():
 
 
 def format_mechanic_address(document: dict) -> str:
-    """Build the display address from structured fields, with legacy fallback."""
+    """Build a display/geocoding address from structured fields, with legacy fallback."""
     street = str(document.get("street_address") or "").strip()
     city = str(document.get("city") or "").strip()
     state = str(document.get("state") or "").strip().upper()
@@ -39,12 +40,12 @@ def format_mechanic_address(document: dict) -> str:
     return str(document.get("address") or "").strip()
 
 
-def serialize_mongo_document(document: dict):
-    document["id"] = str(document["_id"])
-    document.pop("_id", None)
-    document.pop("rating", None)
-    document["address"] = format_mechanic_address(document)
-    return document
+def serialize_mongo_document(document: dict) -> dict:
+    serialized = dict(document)
+    serialized["id"] = str(serialized.pop("_id"))
+    serialized.pop("rating", None)
+    serialized["address"] = format_mechanic_address(serialized)
+    return serialized
 
 
 def validate_zip_code(zip_code: Optional[str]) -> Optional[str]:
@@ -109,13 +110,37 @@ async def register_mechanic(mechanic: MechanicProfile):
         mechanic_dict["zip_code"] = mechanic.zip_code.strip()
         mechanic_dict.pop("address", None)
 
+    display_address = format_mechanic_address(mechanic_dict)
+
     try:
         mechanics_collection = get_mechanics_collection()
+        await mechanics_collection.create_index([("location", "2dsphere")])
+
+        location = None
+        if display_address:
+            try:
+                location = await location_service.geocode_address(display_address)
+            except LocationProviderError:
+                # Profile saving should still work if the external geocoder is unavailable.
+                location = None
+
         update: dict = {"$set": mechanic_dict}
+        unset_fields: dict[str, str] = {"rating": ""}
+
+        if location:
+            update["$set"]["location"] = {
+                "type": "Point",
+                "coordinates": [location["longitude"], location["latitude"]],
+            }
+        else:
+            unset_fields["location"] = ""
 
         if has_complete_structured_location:
-            # Structured location is authoritative. Remove obsolete display-only fields.
-            update["$unset"] = {"address": "", "rating": ""}
+            # Structured location is authoritative; address is derived for responses.
+            unset_fields["address"] = ""
+
+        if unset_fields:
+            update["$unset"] = unset_fields
 
         await mechanics_collection.update_one(
             {"owner_id": owner_id},
@@ -156,7 +181,6 @@ async def browse_mechanics(
         filter_query["owner_id"]["$nin"].append(exclude_owner_id.strip())
 
     if normalized_zip:
-        # New records use zip_code. Legacy records may still only have address.
         filter_query["$or"] = [
             {"zip_code": normalized_zip},
             {"address": {"$regex": rf"\b{re.escape(normalized_zip)}\b"}},
@@ -222,7 +246,7 @@ async def search_mechanics(
         formatted_results = []
         for mechanic in mechanics:
             labor_hours = 2.0
-            estimated_labor_cost = mechanic.get("price_per_hour", 0) * labor_hours
+            estimated_labor_cost = (mechanic.get("price_per_hour") or 0) * labor_hours
             formatted_results.append(
                 {
                     "mechanic_id": str(mechanic["_id"]),
@@ -282,7 +306,8 @@ async def get_appointment_windows(
                 if item.get("appointment_start_time")
             }
             available_windows = [
-                window for window in available_windows
+                window
+                for window in available_windows
                 if window["start"] not in reserved_start_times
             ]
 
