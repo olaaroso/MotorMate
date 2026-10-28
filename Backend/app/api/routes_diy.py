@@ -740,21 +740,17 @@ async def get_listing(
         today = date.today().isoformat()
         reservations_cursor = rental_requests_collection.find({
             "listing_id": listing_id,
-            "$or": [
-                {"status": {"$in": ["active", "return_pending"]}},
-                {"status": {"$in": ["approved", "pickup_pending"]},
-                 "end_date": {"$gte": today}},
-            ],
+            "status": {"$in": ["approved", "pickup_pending", "active", "return_pending"]},
+            "end_date": {"$gte": today},
         }).sort("start_date", 1)
 
         async for reservation in reservations_cursor:
-            # Unreturned tools must remain blocked even after the booked
-            # end date. The calendar treats this as an open-ended hold.
-            unreturned = reservation.get("status") in ("active", "return_pending")
+            # Block only the agreed reservation dates, not all future dates
+            # while the current rental is awaiting physical return.
             reserved_ranges.append({
                 "request_id": str(reservation["_id"]),
-                "start_date": today if unreturned else reservation.get("start_date", ""),
-                "end_date": "9999-12-31" if unreturned else reservation.get("end_date", ""),
+                "start_date": reservation.get("start_date", ""),
+                "end_date": reservation.get("end_date", ""),
             })
 
         return {
@@ -1464,19 +1460,8 @@ async def create_rental_request(
         requested_start = payload.start_date.isoformat()
         requested_end = payload.end_date.isoformat()
 
-        # If these dates already overlap an approved/active
-        # rental, the dates are not available.
-        # A tool still in someone's possession cannot accept new bookings,
-        # even when its original rental dates are already in the past.
-        unreturned_tool = await rental_requests_collection.find_one({
-            "listing_id": payload.listing_id,
-            "status": {"$in": ["active", "return_pending"]},
-        })
-        if unreturned_tool:
-            raise HTTPException(
-                status_code=409,
-                detail="This tool has not been returned yet. New rentals are temporarily blocked.",
-            )
+        # Keep confirmed reservation dates exclusive while allowing
+        # future non-overlapping requests even before a tool is returned.
 
         approved_conflict = (
             await rental_requests_collection.find_one(
@@ -2170,20 +2155,8 @@ async def approve_rental_request(
             )
         )
 
-        # A tool can have multiple approved rentals as long
-        # as their date ranges do not overlap.
-        # A tool still in someone's possession cannot accept new bookings,
-        # even when its original rental dates are already in the past.
-        unreturned_tool = await rental_requests_collection.find_one({
-            "listing_id": listing_id,
-                "_id": {"$ne": ObjectId(request_id)},
-            "status": {"$in": ["active", "return_pending"]},
-        })
-        if unreturned_tool:
-            raise HTTPException(
-                status_code=409,
-                detail="This tool has not been returned yet. New rentals are temporarily blocked.",
-            )
+        # Keep confirmed reservation dates exclusive while allowing
+        # future non-overlapping requests even before a tool is returned.
 
         approved_conflict = (
             await rental_requests_collection.find_one(
