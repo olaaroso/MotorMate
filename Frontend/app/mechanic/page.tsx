@@ -22,6 +22,11 @@ import {
 
 import StatCard from "@/components/StatCard";
 import { auth } from "@/lib/firebase";
+import {
+  describeEstimate,
+  findServiceEstimate,
+  type ServiceEstimate,
+} from "@/lib/serviceEstimates";
 
 const apiUrl =
   process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -34,6 +39,7 @@ type MechanicProfileResponse = {
   address?: string;
   phone?: string;
   services_offered?: string[];
+  service_estimates?: ServiceEstimate[];
   price_per_hour?: number;
   operating_hours?: OperatingHours;
 };
@@ -646,7 +652,10 @@ export default function MechanicPage() {
                     <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white text-[#001F3F] shadow-sm">
                       <Wrench size={12} />
                     </div>
-                    {service}
+                    <span className="flex-1">{service}</span>
+                    <span className="text-xs font-normal text-slate-500">
+                      {describeEstimate(findServiceEstimate(profile.service_estimates, service))}
+                    </span>
                   </li>
                 ))}
               </ul>

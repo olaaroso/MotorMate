@@ -8,7 +8,17 @@ from app.core.auth import require_role
 from app.core.database import db_instance
 from app.models.user import MechanicProfile
 from app.services.location_service import LocationProviderError, location_service
-from app.services.scheduling import remove_past_windows, windows_for_date
+from app.services.scheduling import (
+    appointment_range,
+    remove_past_windows,
+    remove_reserved_windows,
+    windows_for_date,
+)
+from app.services.service_estimates import (
+    find_service_estimate,
+    normalize_service_estimates,
+    service_duration_minutes,
+)
 
 router = APIRouter(prefix="/api/mechanics", tags=["Mechanic Matching"])
 
@@ -102,6 +112,12 @@ async def register_mechanic(mechanic: MechanicProfile):
         for service in mechanic.services_offered
         if service and service.strip()
     ]
+
+    if mechanic.service_estimates is not None:
+        mechanic_dict["service_estimates"] = normalize_service_estimates(
+            mechanic_dict["services_offered"],
+            [estimate.model_dump() for estimate in mechanic.service_estimates],
+        )
 
     if has_complete_structured_location:
         mechanic_dict["street_address"] = mechanic.street_address.strip()
@@ -269,12 +285,19 @@ async def search_mechanics(
 async def get_appointment_windows(
     owner_id: str,
     appointment_date: date = Query(..., alias="date", description="Appointment date, YYYY-MM-DD"),
+    service: Optional[str] = Query(
+        default=None,
+        max_length=100,
+        description="Service being booked; its estimated duration sets each window's length.",
+    ),
 ):
     """
-    Generate 30-minute windows from operating hours.
+    Generate appointment windows from operating hours.
 
-    Pending requests do not reserve a time. Accepted or completed requests keep
-    that appointment time unavailable.
+    Start times step in 30-minute increments. Each window lasts the service's
+    estimated duration (30 minutes when unknown) and must finish by closing.
+    Pending requests do not reserve time. Accepted or completed requests make
+    every window that overlaps their full time range unavailable.
     """
     owner_id = owner_id.strip()
 
@@ -288,33 +311,37 @@ async def get_appointment_windows(
         if not profile:
             raise HTTPException(status_code=404, detail="Mechanic profile not found.")
 
-        day_hours, windows = windows_for_date(profile.get("operating_hours"), appointment_date)
+        duration_minutes = service_duration_minutes(
+            find_service_estimate(profile, service or "")
+        )
+        day_hours, windows = windows_for_date(
+            profile.get("operating_hours"),
+            appointment_date,
+            duration_minutes,
+        )
         available_windows = remove_past_windows(windows, appointment_date)
 
         if available_windows:
-            accepted_cursor = get_service_requests_collection().find(
+            reserved_cursor = get_service_requests_collection().find(
                 {
                     "mechanic_id": owner_id,
                     "appointment_date": appointment_date.isoformat(),
                     "status": {"$in": ["accepted", "completed"]},
                 },
-                {"appointment_start_time": 1},
+                {"appointment_start_time": 1, "appointment_end_time": 1},
             )
-            reserved_start_times = {
-                item.get("appointment_start_time")
-                async for item in accepted_cursor
-                if item.get("appointment_start_time")
-            }
-            available_windows = [
-                window
-                for window in available_windows
-                if window["start"] not in reserved_start_times
+            reserved_ranges = [
+                reserved
+                async for item in reserved_cursor
+                if (reserved := appointment_range(item)) is not None
             ]
+            available_windows = remove_reserved_windows(available_windows, reserved_ranges)
 
         return {
             "date": appointment_date.isoformat(),
             "open": day_hours is not None,
             "hours": day_hours,
+            "duration_minutes": duration_minutes,
             "windows": available_windows,
         }
     except HTTPException:

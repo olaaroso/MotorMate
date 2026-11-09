@@ -15,6 +15,12 @@ import {
 import { onAuthStateChanged } from "firebase/auth";
 
 import { auth } from "@/lib/firebase";
+import {
+  DEFAULT_SERVICE_MINUTES,
+  DURATION_OPTIONS,
+  formatDuration,
+  type ServiceEstimate,
+} from "@/lib/serviceEstimates";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
@@ -81,6 +87,8 @@ const COMMON_SERVICES = [
 
 type OperatingHours = Record<string, string>;
 
+type EstimateInput = { price: string; duration: string };
+
 type MechanicProfileResponse = {
   owner_id?: string;
   shop_name?: string;
@@ -91,6 +99,7 @@ type MechanicProfileResponse = {
   address?: string;
   phone?: string;
   services_offered?: string[];
+  service_estimates?: ServiceEstimate[];
   price_per_hour?: number;
   operating_hours?: OperatingHours;
 };
@@ -133,6 +142,7 @@ export default function MechanicShopPage() {
   const [operatingHours, setOperatingHours] = useState<OperatingHours>(emptyHours());
 
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
+  const [estimates, setEstimates] = useState<Record<string, EstimateInput>>({});
   const [serviceSearch, setServiceSearch] = useState("");
   const [isServiceDropdownOpen, setIsServiceDropdownOpen] = useState(false);
   const [showCustomModal, setShowCustomModal] = useState(false);
@@ -186,6 +196,23 @@ export default function MechanicShopPage() {
         setZipCode(profile.zip_code || "");
         setPhone(profile.phone ? formatPhone(profile.phone) : "");
         setSelectedServices(profile.services_offered || []);
+        setEstimates(
+          Object.fromEntries(
+            (profile.service_estimates || []).map((estimate) => [
+              estimate.name,
+              {
+                price:
+                  typeof estimate.estimated_price === "number"
+                    ? String(estimate.estimated_price)
+                    : "",
+                duration:
+                  typeof estimate.estimated_duration_minutes === "number"
+                    ? String(estimate.estimated_duration_minutes)
+                    : "",
+              },
+            ])
+          )
+        );
         setPricePerHour(
           profile.price_per_hour !== undefined && profile.price_per_hour !== null
             ? String(profile.price_per_hour)
@@ -224,6 +251,35 @@ export default function MechanicShopPage() {
         [day]: type === "open" ? `${value} - ${close}` : `${open} - ${value}`,
       };
     });
+  };
+
+  const updateEstimate = (service: string, field: keyof EstimateInput, value: string) => {
+    setEstimates((current) => ({
+      ...current,
+      [service]: { ...(current[service] ?? { price: "", duration: "" }), [field]: value },
+    }));
+  };
+
+  const buildServiceEstimates = (): ServiceEstimate[] | string => {
+    const result: ServiceEstimate[] = [];
+
+    for (const service of selectedServices) {
+      const input = estimates[service];
+      const priceText = input?.price.trim() || "";
+      const price = priceText ? Number(priceText) : null;
+
+      if (price !== null && (!Number.isFinite(price) || price < 0)) {
+        return `Enter a valid estimated price for ${service}, or leave it blank.`;
+      }
+
+      result.push({
+        name: service,
+        estimated_price: price,
+        estimated_duration_minutes: input?.duration ? Number(input.duration) : null,
+      });
+    }
+
+    return result;
   };
 
   const validateHours = () => {
@@ -283,6 +339,12 @@ export default function MechanicShopPage() {
       return;
     }
 
+    const serviceEstimates = buildServiceEstimates();
+    if (typeof serviceEstimates === "string") {
+      setError(serviceEstimates);
+      return;
+    }
+
     try {
       setSaving(true);
       setError("");
@@ -301,6 +363,7 @@ export default function MechanicShopPage() {
         zip_code: zipCode.trim(),
         phone: phone.trim() || null,
         services_offered: selectedServices,
+        service_estimates: serviceEstimates,
         price_per_hour: pricePerHour ? Number(pricePerHour) : null,
         operating_hours: Object.keys(trimmedHours).length ? trimmedHours : null,
       };
@@ -594,6 +657,60 @@ export default function MechanicShopPage() {
               </div>
             )}
           </div>
+
+          {selectedServices.length > 0 && (
+            <div className="mt-6">
+              <h3 className="text-sm font-semibold text-slate-700">Price &amp; Time Estimates</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Customers see these when choosing your shop. The duration sets how long an
+                accepted appointment blocks your schedule; services without one book{" "}
+                {formatDuration(DEFAULT_SERVICE_MINUTES)}.
+              </p>
+
+              <div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">
+                {selectedServices.map((service) => (
+                  <div
+                    key={service}
+                    className="grid gap-3 px-4 py-3 sm:grid-cols-[1fr_150px_170px] sm:items-center"
+                  >
+                    <span className="text-sm font-medium text-slate-800">{service}</span>
+
+                    <div className="relative">
+                      <DollarSign
+                        size={15}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        inputMode="decimal"
+                        value={estimates[service]?.price ?? ""}
+                        onChange={(event) => updateEstimate(service, "price", event.target.value)}
+                        placeholder="Price"
+                        aria-label={`Estimated price for ${service}`}
+                        className="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-3 text-sm outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
+                      />
+                    </div>
+
+                    <select
+                      value={estimates[service]?.duration ?? ""}
+                      onChange={(event) => updateEstimate(service, "duration", event.target.value)}
+                      aria-label={`Estimated duration for ${service}`}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
+                    >
+                      <option value="">Duration not set</option>
+                      {DURATION_OPTIONS.map((minutes) => (
+                        <option key={minutes} value={minutes}>
+                          {formatDuration(minutes)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         {showCustomModal && (

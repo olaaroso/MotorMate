@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  Bell,
   ChevronDown,
   CircleHelp,
   ClipboardList,
@@ -137,6 +138,7 @@ export default function MechanicMenu() {
           <div className="border-t border-slate-100 py-2">
             <MenuLink href="/mechanic/shop" icon={Store} label="Shop Profile" onClick={() => setOpen(false)} />
             <MenuLink href="/mechanic/requests" icon={ClipboardList} label="Repair Requests" onClick={() => setOpen(false)} />
+            <MenuLink href="/mechanic/notifications" icon={Bell} label="Notifications" onClick={() => setOpen(false)} />
           </div>
 
           <div className="border-t border-slate-100 py-2">

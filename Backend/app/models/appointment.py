@@ -31,6 +31,13 @@ class ServiceRequestCreate(BaseModel):
     vehicle_id: str = Field(..., min_length=1)
     service_requested: str = Field(..., min_length=1, max_length=100)
     problem_description: str = Field(default="", max_length=1000)
+    share_service_history: bool = Field(
+        default=False,
+        description=(
+            "Lets the mechanic view this vehicle's Garage service history "
+            "while the request is pending, accepted, or completed."
+        ),
+    )
 
 
 class ServiceRequestStatusUpdate(BaseModel):

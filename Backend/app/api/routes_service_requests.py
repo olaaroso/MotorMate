@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from bson import ObjectId
@@ -12,11 +12,18 @@ from app.models.appointment import (
     ServiceRequestStatus,
     ServiceRequestStatusUpdate,
 )
+from app.services.notifications import create_notification
 from app.services.scheduling import (
+    appointment_range,
     day_key_for,
     parse_hours,
+    ranges_overlap,
     remove_past_windows,
     windows_for_date,
+)
+from app.services.service_estimates import (
+    find_service_estimate,
+    service_duration_minutes,
 )
 
 router = APIRouter(
@@ -41,6 +48,32 @@ def serialize_mongo_document(document: dict) -> dict:
     return serialized
 
 
+MECHANIC_HIDDEN_FIELDS = ("customer_id", "vehicle_id")
+SHARED_HISTORY_STATUSES = {"pending", "accepted", "completed"}
+SHARED_HISTORY_FIELDS = (
+    "record_type",
+    "title",
+    "service_date",
+    "mileage",
+    "cost",
+    "provider",
+    "part_name",
+    "notes",
+)
+
+
+def serialize_for_mechanic(document: dict) -> dict:
+    """
+    Mechanic-facing copy of a request. The customer's raw IDs stay
+    server-side; shared history is fetched through the request instead.
+    """
+    serialized = serialize_mongo_document(document)
+    for field in MECHANIC_HIDDEN_FIELDS:
+        serialized.pop(field, None)
+    serialized["share_service_history"] = document.get("share_service_history") is True
+    return serialized
+
+
 def format_mechanic_address(mechanic: dict) -> str:
     street = str(mechanic.get("street_address") or "").strip()
     city = str(mechanic.get("city") or "").strip()
@@ -53,6 +86,156 @@ def format_mechanic_address(mechanic: dict) -> str:
         return ", ".join(part for part in (street, city_line) if part)
 
     return str(mechanic.get("address") or "").strip()
+
+
+MECHANIC_REQUESTS_PAGE = "/mechanic/requests"
+CUSTOMER_APPOINTMENTS_PAGE = "/appointments"
+
+
+def describe_vehicle(request_document: dict) -> str:
+    summary = request_document.get("vehicle_summary") or {}
+    name = " ".join(
+        str(part).strip()
+        for part in (summary.get("year"), summary.get("make"), summary.get("model"))
+        if part and str(part).strip()
+    )
+    return name or "vehicle"
+
+
+def describe_appointment(request_document: dict) -> str:
+    """Human-readable appointment time, e.g. 'Mon, Nov 9 at 9:00 AM'."""
+    date_text = str(request_document.get("appointment_date") or "")
+    time_text = str(request_document.get("appointment_start_time") or "")
+
+    try:
+        when = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return " ".join(part for part in (date_text, time_text) if part)
+
+    hour = when.hour % 12 or 12
+    period = "AM" if when.hour < 12 else "PM"
+    return f"{when:%a, %b} {when.day} at {hour}:{when:%M} {period}"
+
+
+async def notify_customer_of_status(request_document: dict):
+    """Tell the car owner their request was accepted, declined, or completed."""
+    status = request_document.get("status")
+    service = request_document.get("service_requested") or "service"
+    shop = request_document.get("shop_name") or "The shop"
+    when = describe_appointment(request_document)
+
+    if status == "accepted":
+        title = "Service Request Accepted"
+        message = f"{shop} accepted your {service} appointment on {when}."
+    elif status == "declined":
+        title = "Service Request Declined"
+        reason = str(request_document.get("status_reason") or "").strip()
+        message = f"{shop} declined your {service} request for {when}."
+        if reason:
+            message = f"{message} {reason}"
+    elif status == "completed":
+        title = "Service Completed"
+        message = (
+            f"{shop} completed your {service} on your {describe_vehicle(request_document)}. "
+            "It has been added to your Garage service history."
+        )
+    else:
+        return
+
+    await create_notification(
+        request_document.get("customer_id"),
+        title,
+        message,
+        destination=CUSTOMER_APPOINTMENTS_PAGE,
+    )
+
+
+def format_clock(minutes: int) -> str:
+    hour, minute = divmod(minutes, 60)
+    period = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minute:02d} {period}"
+
+
+def local_now() -> datetime:
+    """Shop-local wall-clock time; appointment dates/times are stored the same way."""
+    return datetime.now()
+
+
+def appointment_end_datetime(request_document: dict) -> Optional[datetime]:
+    time_range = appointment_range(request_document)
+    try:
+        appointment_day = date.fromisoformat(str(request_document.get("appointment_date") or ""))
+    except ValueError:
+        return None
+    if time_range is None:
+        return None
+    return datetime.combine(appointment_day, datetime.min.time()) + timedelta(
+        minutes=time_range[1]
+    )
+
+
+def describe_appointment_end(end: datetime) -> str:
+    return f"{end:%a, %b} {end.day} at {format_clock(end.hour * 60 + end.minute)}"
+
+
+def appointment_outside_hours(
+    operating_hours: Optional[dict],
+    appointment_date: str,
+    time_range: tuple[int, int],
+) -> Optional[str]:
+    """
+    Explains why a saved appointment no longer fits the shop's current hours
+    for its day, or returns None when it still fits.
+    """
+    try:
+        day = day_key_for(date.fromisoformat(appointment_date)).capitalize()
+    except ValueError:
+        return "This request has an invalid appointment date."
+
+    appointment_text = f"{format_clock(time_range[0])} – {format_clock(time_range[1])}"
+    day_hours = (operating_hours or {}).get(day.lower())
+    parsed = parse_hours(day_hours)
+
+    if not parsed:
+        return (
+            f"This appointment ({appointment_text}) is on a {day}, and your shop "
+            f"is now closed on {day}s. Update your hours or decline the request."
+        )
+
+    open_minutes, close_minutes = parsed
+    if time_range[0] < open_minutes or time_range[1] > close_minutes:
+        return (
+            f"This appointment ({appointment_text}) no longer fits within your "
+            f"current {day} hours ({day_hours}). Update your hours or decline "
+            "the request."
+        )
+
+    return None
+
+
+async def find_overlapping_requests(
+    requests,
+    mechanic_id: str,
+    appointment_date: str,
+    time_range: tuple[int, int],
+    statuses: list[str],
+    exclude_id: Optional[ObjectId] = None,
+) -> list[dict]:
+    """Requests for this mechanic/date whose occupied time overlaps time_range."""
+    query = {
+        "mechanic_id": mechanic_id,
+        "appointment_date": appointment_date,
+        "status": {"$in": statuses},
+    }
+    if exclude_id is not None:
+        query["_id"] = {"$ne": exclude_id}
+
+    overlapping = []
+    async for item in requests.find(query):
+        item_range = appointment_range(item)
+        if item_range is not None and ranges_overlap(item_range, time_range):
+            overlapping.append(item)
+    return overlapping
 
 
 async def ensure_service_request_indexes():
@@ -247,7 +430,12 @@ async def create_service_request(payload: ServiceRequestCreate):
                 detail="Appointment date cannot be in the past.",
             )
 
-        day_hours, windows = windows_for_date(operating_hours, appointment_date)
+        service_estimate = find_service_estimate(mechanic, service_requested)
+        duration_minutes = service_duration_minutes(service_estimate)
+
+        day_hours, windows = windows_for_date(
+            operating_hours, appointment_date, duration_minutes
+        )
         if day_hours is None:
             raise HTTPException(
                 status_code=400,
@@ -259,10 +447,20 @@ async def create_service_request(payload: ServiceRequestCreate):
 
         window = next((item for item in windows if item["start"] == start_time), None)
         if not window:
+            _, start_times = windows_for_date(operating_hours, appointment_date)
+            if any(item["start"] == start_time for item in start_times):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"This service takes about {duration_minutes} minutes and "
+                        f"must finish before the shop closes ({day_hours}). "
+                        "Choose an earlier time."
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "That time is not a valid 30-minute window within the "
+                    "That time is not a valid 30-minute start time within the "
                     f"shop's hours ({day_hours})."
                 ),
             )
@@ -273,19 +471,29 @@ async def create_service_request(payload: ServiceRequestCreate):
                 detail="That appointment time has already passed.",
             )
 
-        slot_filter = {
-            "mechanic_id": mechanic_id,
-            "appointment_date": appointment_date.isoformat(),
-            "appointment_start_time": start_time,
-        }
-
-        if await requests.find_one(
-            {**slot_filter, "status": {"$in": list(RESERVED_STATUSES)}}
+        requested_range = appointment_range(
+            {
+                "appointment_start_time": window["start"],
+                "appointment_end_time": window["end"],
+            }
+        )
+        if await find_overlapping_requests(
+            requests,
+            mechanic_id,
+            appointment_date.isoformat(),
+            requested_range,
+            list(RESERVED_STATUSES),
         ):
             raise HTTPException(
                 status_code=409,
                 detail="That appointment time is no longer available.",
             )
+
+        slot_filter = {
+            "mechanic_id": mechanic_id,
+            "appointment_date": appointment_date.isoformat(),
+            "appointment_start_time": start_time,
+        }
 
         vehicle = await vehicles.find_one(
             {
@@ -328,14 +536,33 @@ async def create_service_request(payload: ServiceRequestCreate):
             "appointment_date": appointment_date.isoformat(),
             "appointment_start_time": window["start"],
             "appointment_end_time": window["end"],
+            "appointment_duration_minutes": duration_minutes,
+            "service_estimate": {
+                "estimated_price": (service_estimate or {}).get("estimated_price"),
+                "estimated_duration_minutes": (service_estimate or {}).get(
+                    "estimated_duration_minutes"
+                ),
+            },
             "service_requested": service_requested,
             "problem_description": problem_description,
+            "share_service_history": payload.share_service_history,
             "status": "pending",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
 
         result = await requests.insert_one(request_document)
         request_document["_id"] = result.inserted_id
+
+        await create_notification(
+            mechanic_id,
+            "New Service Request",
+            (
+                f"{customer_name} requested {service_requested} for their "
+                f"{describe_vehicle(request_document)} on "
+                f"{describe_appointment(request_document)}."
+            ),
+            destination=MECHANIC_REQUESTS_PAGE,
+        )
 
         return {
             "message": "Service request submitted successfully.",
@@ -375,7 +602,7 @@ async def get_mechanic_service_requests(
                 ("created_at", 1),
             ]
         )
-        results = [serialize_mongo_document(item) async for item in cursor]
+        results = [serialize_for_mechanic(item) async for item in cursor]
         return {"count": len(results), "results": results}
     except Exception:
         raise HTTPException(
@@ -410,6 +637,81 @@ async def get_customer_service_requests(
             status_code=500,
             detail="Failed to retrieve customer service requests.",
         )
+
+
+@router.get("/{request_id}/shared-history")
+async def get_shared_service_history(
+    request_id: str,
+    mechanic_id: str = Query(..., min_length=1),
+):
+    """
+    Lets the request's mechanic read the vehicle's Garage service history when
+    the customer opted in. The vehicle and owner always come from the stored
+    request, never from the caller.
+
+    Security limitation: mechanic_id is client-asserted. Verifying a Firebase
+    ID token server-side and taking the mechanic's UID from it is a planned
+    future improvement; until then this only narrows what can be requested.
+    """
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(status_code=400, detail="Invalid service request ID.")
+
+    mechanic_id = mechanic_id.strip()
+    if not mechanic_id:
+        raise HTTPException(status_code=400, detail="mechanic_id is required.")
+
+    request_document = await get_collection("service_requests").find_one(
+        {
+            "_id": ObjectId(request_id),
+            "mechanic_id": mechanic_id,
+        }
+    )
+    if not request_document:
+        raise HTTPException(
+            status_code=404,
+            detail="Service request not found for this mechanic.",
+        )
+
+    if request_document.get("share_service_history") is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="The customer chose not to share this vehicle's service history.",
+        )
+
+    if request_document.get("status", "pending") not in SHARED_HISTORY_STATUSES:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Shared service history is only available for pending, "
+                "accepted, or completed requests."
+            ),
+        )
+
+    vehicle_id = str(request_document.get("vehicle_id") or "").strip()
+    customer_id = str(request_document.get("customer_id") or "").strip()
+
+    records = []
+    if vehicle_id and customer_id:
+        try:
+            cursor = (
+                get_collection("service_history")
+                .find(
+                    {"vehicle_id": vehicle_id, "owner_id": customer_id},
+                    {"_id": 0, **{field: 1 for field in SHARED_HISTORY_FIELDS}},
+                )
+                .sort([("service_date", -1), ("created_at", -1)])
+            )
+            records = [
+                {field: record.get(field) for field in SHARED_HISTORY_FIELDS}
+                async for record in cursor
+            ]
+        except Exception:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to retrieve shared service history.",
+            )
+
+    return {"records": records, "total": len(records)}
 
 
 @router.patch("/{request_id}/status")
@@ -472,7 +774,7 @@ async def update_service_request_status(
             await sync_completed_service_history(request_document)
         return {
             "message": f"Service request is already {payload.status}.",
-            "request": serialize_mongo_document(request_document),
+            "request": serialize_for_mechanic(request_document),
         }
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -482,6 +784,21 @@ async def update_service_request_status(
             raise HTTPException(
                 status_code=409,
                 detail="Only an accepted appointment can be marked completed.",
+            )
+
+        appointment_end = appointment_end_datetime(request_document)
+        if appointment_end is None:
+            raise HTTPException(
+                status_code=409,
+                detail="This request has an invalid appointment time.",
+            )
+        if local_now() < appointment_end:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This appointment can't be marked completed until its "
+                    f"scheduled end time ({describe_appointment_end(appointment_end)})."
+                ),
             )
 
         vehicle_id = str(request_document.get("vehicle_id") or "").strip()
@@ -559,10 +876,11 @@ async def update_service_request_status(
             )
 
         await sync_completed_service_history(updated)
+        await notify_customer_of_status(updated)
 
         return {
             "message": "Service request marked completed and added to Garage service history.",
-            "request": serialize_mongo_document(updated),
+            "request": serialize_for_mechanic(updated),
         }
 
     if current_status != "pending":
@@ -590,27 +908,47 @@ async def update_service_request_status(
         if not updated:
             raise HTTPException(status_code=409, detail="Request is no longer pending.")
 
+        await notify_customer_of_status(updated)
+
         return {
             "message": "Service request declined.",
-            "request": serialize_mongo_document(updated),
+            "request": serialize_for_mechanic(updated),
         }
 
-    slot_filter = {
-        "mechanic_id": mechanic_id,
-        "appointment_date": request_document["appointment_date"],
-        "appointment_start_time": request_document["appointment_start_time"],
-    }
-
-    if await requests.find_one(
-        {
-            **slot_filter,
-            "_id": {"$ne": request_object_id},
-            "status": {"$in": list(RESERVED_STATUSES)},
-        }
-    ):
+    # The occupied time comes from the start/end stored on the request when
+    # it was submitted, so later estimate changes don't move appointments.
+    accepted_range = appointment_range(request_document)
+    if accepted_range is None:
         raise HTTPException(
             status_code=409,
-            detail="Another request has already reserved this time.",
+            detail="This request has an invalid appointment time.",
+        )
+
+    appointment_date = request_document["appointment_date"]
+
+    mechanic = await get_collection("mechanics").find_one({"owner_id": mechanic_id})
+    hours_problem = appointment_outside_hours(
+        (mechanic or {}).get("operating_hours"),
+        appointment_date,
+        accepted_range,
+    )
+    if hours_problem:
+        raise HTTPException(status_code=409, detail=hours_problem)
+
+    async def overlapping_reservations():
+        return await find_overlapping_requests(
+            requests,
+            mechanic_id,
+            appointment_date,
+            accepted_range,
+            list(RESERVED_STATUSES),
+            exclude_id=request_object_id,
+        )
+
+    if await overlapping_reservations():
+        raise HTTPException(
+            status_code=409,
+            detail="Another accepted appointment already overlaps this time.",
         )
 
     try:
@@ -637,26 +975,52 @@ async def update_service_request_status(
     if not updated:
         raise HTTPException(status_code=409, detail="Request is no longer pending.")
 
-    await requests.update_many(
-        {
-            **slot_filter,
-            "_id": {"$ne": request_object_id},
-            "status": "pending",
-        },
-        {
-            "$set": {
-                "status": "declined",
-                "responded_at": now_iso,
-                "status_reason": (
-                    "Another request was accepted for this appointment time."
-                ),
-            }
-        },
+    # Overlapping appointments can have different start times, so the unique
+    # index can't catch them. Re-check after writing: if two overlapping
+    # accepts race, at least one sees the other and backs out.
+    if await overlapping_reservations():
+        await requests.update_one(
+            {"_id": request_object_id, "status": "accepted"},
+            {"$set": {"status": "pending"}, "$unset": {"responded_at": ""}},
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Another accepted appointment already overlaps this time.",
+        )
+
+    await notify_customer_of_status(updated)
+
+    # Decline overlapping pending requests one at a time so only requests
+    # this call actually declined get a notification.
+    competing = await find_overlapping_requests(
+        requests,
+        mechanic_id,
+        appointment_date,
+        accepted_range,
+        ["pending"],
+        exclude_id=request_object_id,
     )
+
+    for competing_request in competing:
+        auto_declined = await requests.find_one_and_update(
+            {"_id": competing_request["_id"], "status": "pending"},
+            {
+                "$set": {
+                    "status": "declined",
+                    "responded_at": now_iso,
+                    "status_reason": (
+                        "Another appointment was accepted for an overlapping time."
+                    ),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if auto_declined:
+            await notify_customer_of_status(auto_declined)
 
     return {
         "message": "Service request accepted.",
-        "request": serialize_mongo_document(updated),
+        "request": serialize_for_mechanic(updated),
     }
 
 

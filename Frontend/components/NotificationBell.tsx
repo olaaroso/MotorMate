@@ -4,45 +4,27 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Bell } from "lucide-react";
+import { Bell, X } from "lucide-react";
 import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "@/lib/firebase";
+import {
+    type AppNotification,
+    NOTIFICATIONS_UPDATED_EVENT,
+    announceNotificationsUpdated,
+    clearNotification,
+    fetchNotifications as requestNotifications,
+    getNotificationDestination,
+    markNotificationRead,
+} from "@/lib/notifications";
 
-type Notification = {
-    id: string;
-    title: string;
-    message: string;
-    is_read: boolean;
-    created_at: string;
-    destination?: string;
+type NotificationBellProps = {
+    notificationsHref?: string;
 };
 
-const API_URL =
-    process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-
-function getNotificationDestination(alert: Notification): string {
-    if (alert.destination === "/myTools" ||
-        alert.destination === "/rentals") {
-        return alert.destination;
-    }
-
-    if (
-        alert.title === "New Rental Request!" ||
-        (
-            alert.title === "Rental Cancelled" &&
-            alert.message.startsWith("The borrower cancelled")
-        ) ||
-        alert.title === "Tool Pickup Confirmed" ||
-        alert.title === "Tool Return Awaiting Confirmation"
-    ) {
-        return "/myTools";
-    }
-
-    return "/rentals";
-}
-
-export default function NotificationBell() {
-    const [notifications, setNotifications] = useState<Notification[]>([]);
+export default function NotificationBell({
+    notificationsHref = "/notifications",
+}: NotificationBellProps) {
+    const [notifications, setNotifications] = useState<AppNotification[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
@@ -53,17 +35,7 @@ export default function NotificationBell() {
 
     const fetchNotifications = useCallback(async (uid: string) => {
         try {
-            const res = await fetch(
-                `${API_URL}/api/notifications/${encodeURIComponent(uid)}`,
-                { cache: "no-store" }
-            );
-
-            if (!res.ok) {
-                throw new Error("Unable to fetch notifications");
-            }
-
-            const data: Notification[] = await res.json();
-            setNotifications(data);
+            setNotifications(await requestNotifications(uid));
         } catch (error) {
             console.error("Failed to fetch notifications:", error);
         }
@@ -89,17 +61,11 @@ export default function NotificationBell() {
             }
         };
 
-        window.addEventListener(
-            "motormate:notifications-updated",
-            refresh
-        );
+        window.addEventListener(NOTIFICATIONS_UPDATED_EVENT, refresh);
         window.addEventListener("focus", refresh);
 
         return () => {
-            window.removeEventListener(
-                "motormate:notifications-updated",
-                refresh
-            );
+            window.removeEventListener(NOTIFICATIONS_UPDATED_EVENT, refresh);
             window.removeEventListener("focus", refresh);
         };
     }, [fetchNotifications]);
@@ -124,23 +90,20 @@ export default function NotificationBell() {
         };
     }, []);
 
-    const handleNotificationClick = async (alert: Notification) => {
-        if (!alert.is_read) {
-            try {
-                const res = await fetch(
-                    `${API_URL}/api/notifications/${alert.id}/read`,
-                    { method: "PATCH" }
-                );
+    const handleNotificationClick = async (alert: AppNotification) => {
+        const uid = auth.currentUser?.uid;
 
-                if (res.ok) {
-                    setNotifications((prev) =>
-                        prev.map((n) =>
-                            n.id === alert.id
-                                ? { ...n, is_read: true }
-                                : n
-                        )
-                    );
-                }
+        if (!alert.is_read && uid) {
+            try {
+                await markNotificationRead(alert.id, uid);
+                setNotifications((prev) =>
+                    prev.map((n) =>
+                        n.id === alert.id
+                            ? { ...n, is_read: true }
+                            : n
+                    )
+                );
+                announceNotificationsUpdated();
             } catch (error) {
                 console.error(
                     "Failed to mark notification as read:",
@@ -152,6 +115,21 @@ export default function NotificationBell() {
         setIsOpen(false);
 
         router.push(getNotificationDestination(alert));
+    };
+
+    const handleClear = async (alert: AppNotification) => {
+        const uid = auth.currentUser?.uid;
+        if (!uid) return;
+
+        try {
+            await clearNotification(alert.id, uid);
+            setNotifications((prev) =>
+                prev.filter((n) => n.id !== alert.id)
+            );
+            announceNotificationsUpdated();
+        } catch (error) {
+            console.error("Failed to clear notification:", error);
+        }
     };
 
     return (
@@ -198,54 +176,75 @@ export default function NotificationBell() {
                             </p>
                         ) : (
                             notifications.slice(0, 5).map((alert) => (
-                                <button
+                                <div
                                     key={alert.id}
-                                    onClick={() =>
-                                        void handleNotificationClick(alert)
-                                    }
-                                    className={`flex flex-col items-start rounded-lg p-3 text-left transition hover:bg-slate-100 ${
+                                    className={`group relative rounded-lg transition hover:bg-slate-100 ${
                                         !alert.is_read
                                             ? "bg-blue-50/60"
                                             : "bg-white"
                                     }`}
                                 >
-                                    <div className="flex w-full items-center justify-between gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void handleNotificationClick(alert)
+                                        }
+                                        className="flex w-full flex-col items-start p-3 pr-9 text-left"
+                                    >
+                                        <div className="flex w-full items-center justify-between gap-2">
+                                            <span
+                                                className={`text-sm ${
+                                                    !alert.is_read
+                                                        ? "font-semibold text-[#001F3F]"
+                                                        : "font-medium text-slate-600"
+                                                }`}
+                                            >
+                                                {alert.title}
+                                            </span>
+
+                                            {!alert.is_read && (
+                                                <div className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
+                                            )}
+                                        </div>
+
                                         <span
-                                            className={`text-sm ${
+                                            className={`mt-1 line-clamp-2 text-xs leading-relaxed ${
                                                 !alert.is_read
-                                                    ? "font-semibold text-[#001F3F]"
-                                                    : "font-medium text-slate-600"
+                                                    ? "text-slate-700"
+                                                    : "text-slate-500"
                                             }`}
                                         >
-                                            {alert.title}
+                                            {alert.message}
                                         </span>
-
-                                        {!alert.is_read && (
-                                            <div className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
-                                        )}
-                                    </div>
-
-                                    <span
-                                        className={`mt-1 line-clamp-2 text-xs leading-relaxed ${
-                                            !alert.is_read
-                                                ? "text-slate-700"
-                                                : "text-slate-500"
-                                        }`}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => void handleClear(alert)}
+                                        aria-label={`Clear notification: ${alert.title}`}
+                                        title="Clear"
+                                        className="absolute right-2 top-2.5 rounded-md p-1 text-slate-400 opacity-0 transition hover:bg-white hover:text-red-600 focus:opacity-100 group-hover:opacity-100"
                                     >
-                                        {alert.message}
-                                    </span>
-                                </button>
+                                        <X size={14} />
+                                    </button>
+                                </div>
                             ))
                         )}
                     </div>
 
-                    <div className="mt-3 border-t border-slate-100 pt-3">
+                    <div className="mt-3 flex gap-2 border-t border-slate-100 pt-3">
                         <Link
-                            href="/notifications"
+                            href={notificationsHref}
                             onClick={() => setIsOpen(false)}
-                            className="block w-full rounded-lg py-2 text-center text-sm font-medium text-blue-600 transition hover:bg-slate-50 hover:text-blue-800"
+                            className="flex-1 rounded-lg py-2 text-center text-sm font-medium text-blue-600 transition hover:bg-slate-50 hover:text-blue-800"
                         >
-                            View all notifications
+                            View all
+                        </Link>
+                        <Link
+                            href={`${notificationsHref}?view=history`}
+                            onClick={() => setIsOpen(false)}
+                            className="flex-1 rounded-lg py-2 text-center text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+                        >
+                            History
                         </Link>
                     </div>
                 </div>

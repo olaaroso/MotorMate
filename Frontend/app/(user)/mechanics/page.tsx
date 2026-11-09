@@ -16,6 +16,11 @@ import {
 } from "lucide-react";
 
 import { auth } from "@/lib/firebase";
+import {
+  describeEstimate,
+  findServiceEstimate,
+  type ServiceEstimate,
+} from "@/lib/serviceEstimates";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const VISIBLE_SERVICE_COUNT = 4;
@@ -31,6 +36,7 @@ type Mechanic = {
   address?: string;
   phone?: string | null;
   services_offered?: string[];
+  service_estimates?: ServiceEstimate[];
   price_per_hour?: number | null;
   operating_hours?: Record<string, string> | null;
   distance_km?: number;
@@ -464,14 +470,23 @@ export default function FindMechanicsPage() {
                         <p className="mt-2 text-sm text-slate-500">No services listed</p>
                       ) : (
                         <div className="mt-2 flex flex-wrap gap-2">
-                          {services.slice(0, VISIBLE_SERVICE_COUNT).map((service) => (
-                            <span
-                              key={service}
-                              className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-[#001F3F]"
-                            >
-                              {service}
-                            </span>
-                          ))}
+                          {services.slice(0, VISIBLE_SERVICE_COUNT).map((service) => {
+                            const estimate = describeEstimate(
+                              findServiceEstimate(mechanic.service_estimates, service)
+                            );
+
+                            return (
+                              <span
+                                key={service}
+                                className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-medium text-[#001F3F]"
+                              >
+                                {service}
+                                {estimate && (
+                                  <span className="ml-1 font-normal text-slate-500">· {estimate}</span>
+                                )}
+                              </span>
+                            );
+                          })}
                           {services.length > VISIBLE_SERVICE_COUNT && (
                             <span
                               title={services.slice(VISIBLE_SERVICE_COUNT).join(", ")}
