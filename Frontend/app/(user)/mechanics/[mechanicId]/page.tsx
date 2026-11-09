@@ -242,6 +242,7 @@ export default function MechanicDetailPage() {
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const [serviceRequested, setServiceRequested] = useState("");
   const [problemDescription, setProblemDescription] = useState("");
+  const [shareServiceHistory, setShareServiceHistory] = useState(false);
   const [submittedEstimate, setSubmittedEstimate] = useState<EstimateValues | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
@@ -423,6 +424,7 @@ export default function MechanicDetailPage() {
           vehicle_id: selectedVehicleId,
           service_requested: serviceRequested,
           problem_description: problemDescription.trim(),
+          share_service_history: shareServiceHistory,
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -795,6 +797,24 @@ export default function MechanicDetailPage() {
                   />
                   <p className="mt-1 text-right text-xs text-slate-400">{problemDescription.length}/1000</p>
                 </div>
+
+                <label className="flex items-start gap-3 rounded-xl border border-slate-200 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={shareServiceHistory}
+                    onChange={(event) => setShareServiceHistory(event.target.checked)}
+                    disabled={formDisabled}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 accent-[#001F3F]"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-700">
+                      Share this vehicle&apos;s service history with the mechanic
+                    </span>
+                    <span className="mt-0.5 block text-xs leading-5 text-slate-500">
+                      This can help the mechanic understand previous maintenance and repairs for this vehicle.
+                    </span>
+                  </span>
+                </label>
 
                 {serviceRequested && (
                   <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">

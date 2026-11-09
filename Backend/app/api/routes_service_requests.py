@@ -48,6 +48,32 @@ def serialize_mongo_document(document: dict) -> dict:
     return serialized
 
 
+MECHANIC_HIDDEN_FIELDS = ("customer_id", "vehicle_id")
+SHARED_HISTORY_STATUSES = {"pending", "accepted", "completed"}
+SHARED_HISTORY_FIELDS = (
+    "record_type",
+    "title",
+    "service_date",
+    "mileage",
+    "cost",
+    "provider",
+    "part_name",
+    "notes",
+)
+
+
+def serialize_for_mechanic(document: dict) -> dict:
+    """
+    Mechanic-facing copy of a request. The customer's raw IDs stay
+    server-side; shared history is fetched through the request instead.
+    """
+    serialized = serialize_mongo_document(document)
+    for field in MECHANIC_HIDDEN_FIELDS:
+        serialized.pop(field, None)
+    serialized["share_service_history"] = document.get("share_service_history") is True
+    return serialized
+
+
 def format_mechanic_address(mechanic: dict) -> str:
     street = str(mechanic.get("street_address") or "").strip()
     city = str(mechanic.get("city") or "").strip()
@@ -497,6 +523,7 @@ async def create_service_request(payload: ServiceRequestCreate):
             },
             "service_requested": service_requested,
             "problem_description": problem_description,
+            "share_service_history": payload.share_service_history,
             "status": "pending",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -553,7 +580,7 @@ async def get_mechanic_service_requests(
                 ("created_at", 1),
             ]
         )
-        results = [serialize_mongo_document(item) async for item in cursor]
+        results = [serialize_for_mechanic(item) async for item in cursor]
         return {"count": len(results), "results": results}
     except Exception:
         raise HTTPException(
@@ -588,6 +615,81 @@ async def get_customer_service_requests(
             status_code=500,
             detail="Failed to retrieve customer service requests.",
         )
+
+
+@router.get("/{request_id}/shared-history")
+async def get_shared_service_history(
+    request_id: str,
+    mechanic_id: str = Query(..., min_length=1),
+):
+    """
+    Lets the request's mechanic read the vehicle's Garage service history when
+    the customer opted in. The vehicle and owner always come from the stored
+    request, never from the caller.
+
+    Security limitation: mechanic_id is client-asserted. Verifying a Firebase
+    ID token server-side and taking the mechanic's UID from it is a planned
+    future improvement; until then this only narrows what can be requested.
+    """
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(status_code=400, detail="Invalid service request ID.")
+
+    mechanic_id = mechanic_id.strip()
+    if not mechanic_id:
+        raise HTTPException(status_code=400, detail="mechanic_id is required.")
+
+    request_document = await get_collection("service_requests").find_one(
+        {
+            "_id": ObjectId(request_id),
+            "mechanic_id": mechanic_id,
+        }
+    )
+    if not request_document:
+        raise HTTPException(
+            status_code=404,
+            detail="Service request not found for this mechanic.",
+        )
+
+    if request_document.get("share_service_history") is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="The customer chose not to share this vehicle's service history.",
+        )
+
+    if request_document.get("status", "pending") not in SHARED_HISTORY_STATUSES:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Shared service history is only available for pending, "
+                "accepted, or completed requests."
+            ),
+        )
+
+    vehicle_id = str(request_document.get("vehicle_id") or "").strip()
+    customer_id = str(request_document.get("customer_id") or "").strip()
+
+    records = []
+    if vehicle_id and customer_id:
+        try:
+            cursor = (
+                get_collection("service_history")
+                .find(
+                    {"vehicle_id": vehicle_id, "owner_id": customer_id},
+                    {"_id": 0, **{field: 1 for field in SHARED_HISTORY_FIELDS}},
+                )
+                .sort([("service_date", -1), ("created_at", -1)])
+            )
+            records = [
+                {field: record.get(field) for field in SHARED_HISTORY_FIELDS}
+                async for record in cursor
+            ]
+        except Exception:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to retrieve shared service history.",
+            )
+
+    return {"records": records, "total": len(records)}
 
 
 @router.patch("/{request_id}/status")
@@ -650,7 +752,7 @@ async def update_service_request_status(
             await sync_completed_service_history(request_document)
         return {
             "message": f"Service request is already {payload.status}.",
-            "request": serialize_mongo_document(request_document),
+            "request": serialize_for_mechanic(request_document),
         }
 
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -741,7 +843,7 @@ async def update_service_request_status(
 
         return {
             "message": "Service request marked completed and added to Garage service history.",
-            "request": serialize_mongo_document(updated),
+            "request": serialize_for_mechanic(updated),
         }
 
     if current_status != "pending":
@@ -773,7 +875,7 @@ async def update_service_request_status(
 
         return {
             "message": "Service request declined.",
-            "request": serialize_mongo_document(updated),
+            "request": serialize_for_mechanic(updated),
         }
 
     # The occupied time comes from the start/end stored on the request when
@@ -881,7 +983,7 @@ async def update_service_request_status(
 
     return {
         "message": "Service request accepted.",
-        "request": serialize_mongo_document(updated),
+        "request": serialize_for_mechanic(updated),
     }
 
 

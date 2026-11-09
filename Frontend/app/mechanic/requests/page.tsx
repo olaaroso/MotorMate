@@ -12,6 +12,7 @@ import {
   DollarSign,
   FileText,
   Gauge,
+  History,
   Loader2,
   RefreshCw,
   ThumbsDown,
@@ -48,13 +49,12 @@ type VehicleSummary = {
 
 type ServiceRequest = {
   id: string;
-  customer_id: string;
   customer_name: string;
   mechanic_id: string;
   shop_name?: string;
   shop_address?: string;
-  vehicle_id: string;
   vehicle_summary?: VehicleSummary;
+  share_service_history?: boolean;
   appointment_date: string;
   appointment_start_time: string;
   appointment_end_time: string;
@@ -76,6 +76,37 @@ type RequestsResponse = {
   count?: number;
   results?: ServiceRequest[];
 };
+
+type SharedHistoryRecord = {
+  record_type?: "maintenance" | "part_replacement";
+  title: string;
+  service_date: string;
+  mileage?: number | null;
+  cost?: number | null;
+  provider?: string | null;
+  part_name?: string | null;
+  notes?: string | null;
+};
+
+async function fetchSharedHistory(
+  requestId: string,
+  mechanicId: string
+): Promise<SharedHistoryRecord[]> {
+  const params = new URLSearchParams({ mechanic_id: mechanicId });
+  const response = await fetch(
+    `${apiUrl}/api/service-requests/${encodeURIComponent(requestId)}/shared-history?${params.toString()}`
+  );
+  const data = (await response.json().catch(() => ({}))) as {
+    records?: SharedHistoryRecord[];
+    detail?: string;
+  };
+
+  if (!response.ok) {
+    throw new Error(data.detail || "Failed to load service history.");
+  }
+
+  return Array.isArray(data.records) ? data.records : [];
+}
 
 const FILTERS: Array<{ value: RequestFilter; label: string }> = [
   { value: "all", label: "All" },
@@ -615,6 +646,7 @@ export default function MechanicRequestsPage() {
                 <RequestCard
                   key={request.id}
                   request={request}
+                  mechanicId={mechanicId}
                   updatingStatus={
                     updatingAction?.requestId === request.id
                       ? updatingAction.status
@@ -776,6 +808,7 @@ export default function MechanicRequestsPage() {
 
 function RequestCard({
   request,
+  mechanicId,
   updatingStatus,
   actionsDisabled,
   removing,
@@ -785,6 +818,7 @@ function RequestCard({
   onRemove,
 }: {
   request: ServiceRequest;
+  mechanicId: string;
   updatingStatus: "accepted" | "declined" | "completed" | null;
   actionsDisabled: boolean;
   removing: boolean;
@@ -869,6 +903,8 @@ function RequestCard({
               </p>
             </div>
           )}
+
+          <SharedHistorySection request={request} mechanicId={mechanicId} />
 
           {request.status === "completed" &&
             (request.completed_cost !== undefined || request.completion_notes?.trim()) && (
@@ -967,6 +1003,128 @@ function RequestCard({
         )}
       </div>
     </article>
+  );
+}
+
+function SharedHistorySection({
+  request,
+  mechanicId,
+}: {
+  request: ServiceRequest;
+  mechanicId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [records, setRecords] = useState<SharedHistoryRecord[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  if (!request.share_service_history) {
+    return (
+      <p className="mt-4 flex items-center gap-2 text-sm text-slate-500">
+        <History size={15} className="text-slate-400" />
+        The customer chose not to share this vehicle&apos;s service history.
+      </p>
+    );
+  }
+
+  if (request.status === "declined") {
+    return (
+      <p className="mt-4 flex items-center gap-2 text-sm text-slate-500">
+        <History size={15} className="text-slate-400" />
+        Shared service history is not available for declined requests.
+      </p>
+    );
+  }
+
+  const toggle = async () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+
+    setOpen(true);
+    if (records || loading || !mechanicId) return;
+
+    try {
+      setLoading(true);
+      setError("");
+      setRecords(await fetchSharedHistory(request.id, mechanicId));
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "Failed to load service history."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <History size={15} className="text-indigo-500" />
+          The customer shared this vehicle&apos;s service history.
+        </p>
+        <button
+          type="button"
+          onClick={() => void toggle()}
+          className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 transition hover:bg-indigo-50"
+        >
+          {open ? "Hide service history" : "View service history"}
+        </button>
+      </div>
+
+      {open && (
+        <div className="mt-3">
+          {loading ? (
+            <p className="flex items-center gap-2 text-sm text-slate-500">
+              <Loader2 size={15} className="animate-spin" />
+              Loading service history...
+            </p>
+          ) : error ? (
+            <p className="text-sm text-red-700">{error}</p>
+          ) : !records || records.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              No service history records have been added for this vehicle yet.
+            </p>
+          ) : (
+            <ul className="max-h-72 divide-y divide-indigo-100 overflow-y-auto rounded-lg bg-white">
+              {records.map((record, index) => (
+                <li key={`${record.service_date}-${record.title}-${index}`} className="px-3 py-2.5 text-sm">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="font-semibold text-slate-800">
+                      {record.title}
+                      {record.record_type === "part_replacement" && record.part_name
+                        ? ` · ${record.part_name}`
+                        : ""}
+                    </span>
+                    <span className="text-xs text-slate-500">{formatDate(record.service_date)}</span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {[
+                      typeof record.mileage === "number"
+                        ? `${record.mileage.toLocaleString()} mi`
+                        : null,
+                      record.provider,
+                      typeof record.cost === "number"
+                        ? record.cost.toLocaleString(undefined, { style: "currency", currency: "USD" })
+                        : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  {record.notes?.trim() && (
+                    <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-slate-600">
+                      {record.notes}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
