@@ -26,6 +26,11 @@ import {
 
 import StatCard from "@/components/StatCard";
 import { auth } from "@/lib/firebase";
+import {
+  describeEstimate,
+  hasEstimateValues,
+  type ServiceEstimate,
+} from "@/lib/serviceEstimates";
 
 const apiUrl =
   process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -53,6 +58,8 @@ type ServiceRequest = {
   appointment_date: string;
   appointment_start_time: string;
   appointment_end_time: string;
+  appointment_duration_minutes?: number;
+  service_estimate?: Pick<ServiceEstimate, "estimated_price" | "estimated_duration_minutes">;
   service_requested: string;
   problem_description?: string;
   status: RequestStatus;
@@ -842,6 +849,14 @@ function RequestCard({
               value={mileageLabel(request.vehicle_summary)}
             />
           </div>
+
+          {hasEstimateValues(request.service_estimate) && (
+            <p className="mt-3 flex items-center gap-2 text-sm text-slate-600">
+              <DollarSign size={15} className="text-slate-400" />
+              <span className="font-semibold text-slate-700">Quoted estimate:</span>
+              {describeEstimate(request.service_estimate)}
+            </p>
+          )}
 
           {request.problem_description?.trim() && (
             <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-4">

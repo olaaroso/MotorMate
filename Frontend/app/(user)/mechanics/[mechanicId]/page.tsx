@@ -23,6 +23,15 @@ import {
 } from "lucide-react";
 
 import { auth, db } from "@/lib/firebase";
+import {
+  DEFAULT_SERVICE_MINUTES,
+  describeEstimate,
+  findServiceEstimate,
+  formatDuration,
+  formatPrice,
+  hasEstimateValues,
+  type ServiceEstimate,
+} from "@/lib/serviceEstimates";
 
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 const OTHER_SERVICE = "Other / Not sure";
@@ -37,6 +46,7 @@ type MechanicProfile = {
   address?: string;
   phone?: string | null;
   services_offered?: string[];
+  service_estimates?: ServiceEstimate[];
   price_per_hour?: number | null;
   operating_hours?: Record<string, string> | null;
 };
@@ -49,6 +59,7 @@ type AppointmentWindow = {
 type DayWindows = {
   open: boolean;
   hours: string | null;
+  durationMinutes: number;
   windows: AppointmentWindow[];
 };
 
@@ -167,9 +178,14 @@ function toGarageVehicle(raw: RawVehicle): GarageVehicle | null {
   };
 }
 
-async function fetchWindows(mechanicId: string, date: string): Promise<DayWindows> {
+async function fetchWindows(
+  mechanicId: string,
+  date: string,
+  service: string
+): Promise<DayWindows> {
+  const params = new URLSearchParams({ date, service });
   const response = await fetch(
-    `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}/appointment-windows?date=${date}`
+    `${apiUrl}/api/mechanics/${encodeURIComponent(mechanicId)}/appointment-windows?${params.toString()}`
   );
   const data = await response.json().catch(() => ({}));
 
@@ -180,6 +196,7 @@ async function fetchWindows(mechanicId: string, date: string): Promise<DayWindow
   return {
     open: Boolean(data.open),
     hours: data.hours ?? null,
+    durationMinutes: Number(data.duration_minutes) || DEFAULT_SERVICE_MINUTES,
     windows: data.windows || [],
   };
 }
@@ -225,6 +242,7 @@ export default function MechanicDetailPage() {
   const [selectedVehicleId, setSelectedVehicleId] = useState("");
   const [serviceRequested, setServiceRequested] = useState("");
   const [problemDescription, setProblemDescription] = useState("");
+  const [submittedEstimate, setSubmittedEstimate] = useState<EstimateValues | null>(null);
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
@@ -269,14 +287,14 @@ export default function MechanicDetailPage() {
   }, [mechanicId, preselectedService]);
 
   useEffect(() => {
-    if (!mechanicId || !appointmentDate) return;
+    if (!mechanicId || !appointmentDate || !serviceRequested) return;
 
     let cancelled = false;
     (async () => {
       try {
         setWindowsLoading(true);
         setWindowsError("");
-        const result = await fetchWindows(mechanicId, appointmentDate);
+        const result = await fetchWindows(mechanicId, appointmentDate, serviceRequested);
 
         if (!cancelled) {
           setDayWindows(result);
@@ -301,7 +319,7 @@ export default function MechanicDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [mechanicId, appointmentDate, windowsRefresh]);
+  }, [mechanicId, appointmentDate, serviceRequested, windowsRefresh]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -353,6 +371,12 @@ export default function MechanicDetailPage() {
   }, []);
 
   const services = profile?.services_offered || [];
+  const isOfferedService = services.some(
+    (service) => service.trim().toLowerCase() === serviceRequested.trim().toLowerCase()
+  );
+  const selectedEstimate = isOfferedService
+    ? findServiceEstimate(profile?.service_estimates, serviceRequested)
+    : undefined;
   const hours = groupHours(profile?.operating_hours);
   const isOwnShop = Boolean(currentUserId && currentUserId === mechanicId);
   const acceptsRequests = hours.length > 0 && services.length > 0;
@@ -410,6 +434,7 @@ export default function MechanicDetailPage() {
         throw new Error(data.detail || "Unable to submit your request.");
       }
 
+      setSubmittedEstimate(data.request?.service_estimate ?? null);
       setSubmitSuccess(true);
     } catch (err) {
       console.error("Service request failed:", err);
@@ -526,13 +551,38 @@ export default function MechanicDetailPage() {
             {services.length === 0 ? (
               <p className="mt-3 text-sm text-slate-500">No services listed.</p>
             ) : (
-              <div className="mt-4 flex flex-wrap gap-2">
-                {services.map((service) => (
-                  <span key={service} className="rounded-lg bg-blue-50 px-3 py-1.5 text-sm font-medium text-[#001F3F]">
-                    {service}
-                  </span>
-                ))}
-              </div>
+              <>
+                <ul className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-100">
+                  {services.map((service) => {
+                    const estimate = findServiceEstimate(profile.service_estimates, service);
+
+                    return (
+                      <li key={service} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                        <span className="text-sm font-medium text-[#001F3F]">{service}</span>
+                        <span className="flex flex-wrap gap-2 text-sm">
+                          {typeof estimate?.estimated_price === "number" && (
+                            <span className="rounded-lg bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-700">
+                              {formatPrice(estimate.estimated_price)}
+                            </span>
+                          )}
+                          {typeof estimate?.estimated_duration_minutes === "number" && (
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 font-medium text-slate-600">
+                              <Clock size={13} />
+                              {formatDuration(estimate.estimated_duration_minutes)}
+                            </span>
+                          )}
+                          {!describeEstimate(estimate) && (
+                            <span className="text-slate-400">Estimate not listed</span>
+                          )}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <p className="mt-3 text-xs text-slate-400">
+                  Estimates are set by the shop. Final price is confirmed when the work is done.
+                </p>
+              </>
             )}
           </section>
         </div>
@@ -559,6 +609,11 @@ export default function MechanicDetailPage() {
                   <p className="mt-1 text-sm">
                     {formatLongDate(appointmentDate)} • {formatWindow(selectedWindow)}. Status:{" "}
                     <span className="font-semibold">Pending</span> until the shop responds.
+                  </p>
+                  <p className="mt-1 text-sm">
+                    {hasEstimateValues(submittedEstimate)
+                      ? `Estimate saved with your request: ${approximateEstimate(submittedEstimate)}.`
+                      : "No price/time estimate was provided for this service."}
                   </p>
                   <Link href="/appointments" className="mt-2 inline-block text-sm font-semibold underline">
                     View My Appointments
@@ -589,6 +644,35 @@ export default function MechanicDetailPage() {
             {!isOwnShop && acceptsRequests && (
               <div className="mt-6 space-y-6">
                 <div>
+                  <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                    <Wrench size={16} className="text-[#001F3F]" /> Service Needed
+                  </label>
+                  <select
+                    value={serviceRequested}
+                    onChange={(event) => {
+                      setServiceRequested(event.target.value);
+                      setSelectedStart("");
+                      setDayWindows(null);
+                      setSubmitError("");
+                    }}
+                    disabled={formDisabled}
+                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
+                  >
+                    <option value="">Select a service</option>
+                    <optgroup label="Services offered by this shop">
+                      {services.map((service) => (
+                        <option key={service} value={service}>{service}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="Other">
+                      <option value={OTHER_SERVICE}>{OTHER_SERVICE}</option>
+                    </optgroup>
+                  </select>
+
+                  {serviceRequested && <EstimateNotice estimate={selectedEstimate} />}
+                </div>
+
+                <div>
                   <label htmlFor="appointment-date" className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                     <CalendarDays size={16} className="text-[#001F3F]" /> Appointment Date
                   </label>
@@ -607,11 +691,21 @@ export default function MechanicDetailPage() {
                     className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
                   />
 
-                  {appointmentDate && (
+                  {appointmentDate && !serviceRequested && (
+                    <p className="mt-4 rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-3 text-center text-sm text-slate-500">
+                      Choose a service to see available times.
+                    </p>
+                  )}
+
+                  {appointmentDate && serviceRequested && (
                     <div className="mt-4">
                       <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                         <Clock size={16} className="text-[#001F3F]" /> Appointment Time
-                        <span className="font-normal text-slate-400">(30 min)</span>
+                        {dayWindows && (
+                          <span className="font-normal text-slate-400">
+                            ({formatDuration(dayWindows.durationMinutes)})
+                          </span>
+                        )}
                       </p>
                       {windowsLoading ? (
                         <p className="mt-3 flex items-center text-sm text-slate-400">
@@ -689,28 +783,6 @@ export default function MechanicDetailPage() {
                 </div>
 
                 <div>
-                  <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                    <Wrench size={16} className="text-[#001F3F]" /> Service Needed
-                  </label>
-                  <select
-                    value={serviceRequested}
-                    onChange={(event) => setServiceRequested(event.target.value)}
-                    disabled={formDisabled}
-                    className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-700 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
-                  >
-                    <option value="">Select a service</option>
-                    <optgroup label="Services offered by this shop">
-                      {services.map((service) => (
-                        <option key={service} value={service}>{service}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Other">
-                      <option value={OTHER_SERVICE}>{OTHER_SERVICE}</option>
-                    </optgroup>
-                  </select>
-                </div>
-
-                <div>
                   <label className="text-sm font-semibold text-slate-700">Describe the problem <span className="font-normal text-slate-400">(optional)</span></label>
                   <textarea
                     rows={4}
@@ -723,6 +795,15 @@ export default function MechanicDetailPage() {
                   />
                   <p className="mt-1 text-right text-xs text-slate-400">{problemDescription.length}/1000</p>
                 </div>
+
+                {serviceRequested && (
+                  <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                    <span className="font-semibold text-slate-800">{serviceRequested}:</span>{" "}
+                    {hasEstimateValues(selectedEstimate)
+                      ? `${approximateEstimate(selectedEstimate)} (estimate, not a guaranteed final price or time)`
+                      : "Price/time estimate not provided by this shop."}
+                  </p>
+                )}
 
                 <button
                   type="button"
@@ -749,6 +830,59 @@ export default function MechanicDetailPage() {
           </section>
         </aside>
       </div>
+    </div>
+  );
+}
+
+type EstimateValues = Pick<ServiceEstimate, "estimated_price" | "estimated_duration_minutes">;
+
+function approximatePrice(estimate: EstimateValues | null | undefined) {
+  return typeof estimate?.estimated_price === "number"
+    ? `~${formatPrice(estimate.estimated_price)}`
+    : null;
+}
+
+function approximateDuration(estimate: EstimateValues | null | undefined) {
+  return typeof estimate?.estimated_duration_minutes === "number"
+    ? `~${estimate.estimated_duration_minutes} minutes`
+    : null;
+}
+
+function approximateEstimate(estimate: EstimateValues | null | undefined) {
+  return [approximatePrice(estimate), approximateDuration(estimate)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function EstimateNotice({ estimate }: { estimate: EstimateValues | undefined }) {
+  if (!hasEstimateValues(estimate)) {
+    return (
+      <p className="mt-3 rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-3 text-sm text-slate-500">
+        Price/time estimate not provided by this shop.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm">
+      <p className="font-semibold text-[#001F3F]">Shop estimate</p>
+      <dl className="mt-2 space-y-1 text-slate-700">
+        <div className="flex justify-between gap-3">
+          <dt>Estimated price:</dt>
+          <dd className="font-semibold text-slate-900">
+            {approximatePrice(estimate) ?? "Not provided"}
+          </dd>
+        </div>
+        <div className="flex justify-between gap-3">
+          <dt>Estimated service duration:</dt>
+          <dd className="font-semibold text-slate-900">
+            {approximateDuration(estimate) ?? "Not provided"}
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-2 text-xs text-slate-500">
+        Estimates only. The final price and time are confirmed by the shop and may differ.
+      </p>
     </div>
   );
 }

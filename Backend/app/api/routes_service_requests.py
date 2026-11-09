@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
 from bson import ObjectId
@@ -14,10 +14,16 @@ from app.models.appointment import (
 )
 from app.services.notifications import create_notification
 from app.services.scheduling import (
+    appointment_range,
     day_key_for,
     parse_hours,
+    ranges_overlap,
     remove_past_windows,
     windows_for_date,
+)
+from app.services.service_estimates import (
+    find_service_estimate,
+    service_duration_minutes,
 )
 
 router = APIRouter(
@@ -116,6 +122,72 @@ async def notify_customer_of_status(request_document: dict):
         message,
         destination=CUSTOMER_APPOINTMENTS_PAGE,
     )
+
+
+def format_clock(minutes: int) -> str:
+    hour, minute = divmod(minutes, 60)
+    period = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minute:02d} {period}"
+
+
+def appointment_outside_hours(
+    operating_hours: Optional[dict],
+    appointment_date: str,
+    time_range: tuple[int, int],
+) -> Optional[str]:
+    """
+    Explains why a saved appointment no longer fits the shop's current hours
+    for its day, or returns None when it still fits.
+    """
+    try:
+        day = day_key_for(date.fromisoformat(appointment_date)).capitalize()
+    except ValueError:
+        return "This request has an invalid appointment date."
+
+    appointment_text = f"{format_clock(time_range[0])} – {format_clock(time_range[1])}"
+    day_hours = (operating_hours or {}).get(day.lower())
+    parsed = parse_hours(day_hours)
+
+    if not parsed:
+        return (
+            f"This appointment ({appointment_text}) is on a {day}, and your shop "
+            f"is now closed on {day}s. Update your hours or decline the request."
+        )
+
+    open_minutes, close_minutes = parsed
+    if time_range[0] < open_minutes or time_range[1] > close_minutes:
+        return (
+            f"This appointment ({appointment_text}) no longer fits within your "
+            f"current {day} hours ({day_hours}). Update your hours or decline "
+            "the request."
+        )
+
+    return None
+
+
+async def find_overlapping_requests(
+    requests,
+    mechanic_id: str,
+    appointment_date: str,
+    time_range: tuple[int, int],
+    statuses: list[str],
+    exclude_id: Optional[ObjectId] = None,
+) -> list[dict]:
+    """Requests for this mechanic/date whose occupied time overlaps time_range."""
+    query = {
+        "mechanic_id": mechanic_id,
+        "appointment_date": appointment_date,
+        "status": {"$in": statuses},
+    }
+    if exclude_id is not None:
+        query["_id"] = {"$ne": exclude_id}
+
+    overlapping = []
+    async for item in requests.find(query):
+        item_range = appointment_range(item)
+        if item_range is not None and ranges_overlap(item_range, time_range):
+            overlapping.append(item)
+    return overlapping
 
 
 async def ensure_service_request_indexes():
@@ -310,7 +382,12 @@ async def create_service_request(payload: ServiceRequestCreate):
                 detail="Appointment date cannot be in the past.",
             )
 
-        day_hours, windows = windows_for_date(operating_hours, appointment_date)
+        service_estimate = find_service_estimate(mechanic, service_requested)
+        duration_minutes = service_duration_minutes(service_estimate)
+
+        day_hours, windows = windows_for_date(
+            operating_hours, appointment_date, duration_minutes
+        )
         if day_hours is None:
             raise HTTPException(
                 status_code=400,
@@ -322,10 +399,20 @@ async def create_service_request(payload: ServiceRequestCreate):
 
         window = next((item for item in windows if item["start"] == start_time), None)
         if not window:
+            _, start_times = windows_for_date(operating_hours, appointment_date)
+            if any(item["start"] == start_time for item in start_times):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"This service takes about {duration_minutes} minutes and "
+                        f"must finish before the shop closes ({day_hours}). "
+                        "Choose an earlier time."
+                    ),
+                )
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "That time is not a valid 30-minute window within the "
+                    "That time is not a valid 30-minute start time within the "
                     f"shop's hours ({day_hours})."
                 ),
             )
@@ -336,19 +423,29 @@ async def create_service_request(payload: ServiceRequestCreate):
                 detail="That appointment time has already passed.",
             )
 
-        slot_filter = {
-            "mechanic_id": mechanic_id,
-            "appointment_date": appointment_date.isoformat(),
-            "appointment_start_time": start_time,
-        }
-
-        if await requests.find_one(
-            {**slot_filter, "status": {"$in": list(RESERVED_STATUSES)}}
+        requested_range = appointment_range(
+            {
+                "appointment_start_time": window["start"],
+                "appointment_end_time": window["end"],
+            }
+        )
+        if await find_overlapping_requests(
+            requests,
+            mechanic_id,
+            appointment_date.isoformat(),
+            requested_range,
+            list(RESERVED_STATUSES),
         ):
             raise HTTPException(
                 status_code=409,
                 detail="That appointment time is no longer available.",
             )
+
+        slot_filter = {
+            "mechanic_id": mechanic_id,
+            "appointment_date": appointment_date.isoformat(),
+            "appointment_start_time": start_time,
+        }
 
         vehicle = await vehicles.find_one(
             {
@@ -391,6 +488,13 @@ async def create_service_request(payload: ServiceRequestCreate):
             "appointment_date": appointment_date.isoformat(),
             "appointment_start_time": window["start"],
             "appointment_end_time": window["end"],
+            "appointment_duration_minutes": duration_minutes,
+            "service_estimate": {
+                "estimated_price": (service_estimate or {}).get("estimated_price"),
+                "estimated_duration_minutes": (service_estimate or {}).get(
+                    "estimated_duration_minutes"
+                ),
+            },
             "service_requested": service_requested,
             "problem_description": problem_description,
             "status": "pending",
@@ -672,22 +776,40 @@ async def update_service_request_status(
             "request": serialize_mongo_document(updated),
         }
 
-    slot_filter = {
-        "mechanic_id": mechanic_id,
-        "appointment_date": request_document["appointment_date"],
-        "appointment_start_time": request_document["appointment_start_time"],
-    }
-
-    if await requests.find_one(
-        {
-            **slot_filter,
-            "_id": {"$ne": request_object_id},
-            "status": {"$in": list(RESERVED_STATUSES)},
-        }
-    ):
+    # The occupied time comes from the start/end stored on the request when
+    # it was submitted, so later estimate changes don't move appointments.
+    accepted_range = appointment_range(request_document)
+    if accepted_range is None:
         raise HTTPException(
             status_code=409,
-            detail="Another request has already reserved this time.",
+            detail="This request has an invalid appointment time.",
+        )
+
+    appointment_date = request_document["appointment_date"]
+
+    mechanic = await get_collection("mechanics").find_one({"owner_id": mechanic_id})
+    hours_problem = appointment_outside_hours(
+        (mechanic or {}).get("operating_hours"),
+        appointment_date,
+        accepted_range,
+    )
+    if hours_problem:
+        raise HTTPException(status_code=409, detail=hours_problem)
+
+    async def overlapping_reservations():
+        return await find_overlapping_requests(
+            requests,
+            mechanic_id,
+            appointment_date,
+            accepted_range,
+            list(RESERVED_STATUSES),
+            exclude_id=request_object_id,
+        )
+
+    if await overlapping_reservations():
+        raise HTTPException(
+            status_code=409,
+            detail="Another accepted appointment already overlaps this time.",
         )
 
     try:
@@ -714,29 +836,41 @@ async def update_service_request_status(
     if not updated:
         raise HTTPException(status_code=409, detail="Request is no longer pending.")
 
+    # Overlapping appointments can have different start times, so the unique
+    # index can't catch them. Re-check after writing: if two overlapping
+    # accepts race, at least one sees the other and backs out.
+    if await overlapping_reservations():
+        await requests.update_one(
+            {"_id": request_object_id, "status": "accepted"},
+            {"$set": {"status": "pending"}, "$unset": {"responded_at": ""}},
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Another accepted appointment already overlaps this time.",
+        )
+
     await notify_customer_of_status(updated)
 
-    # Decline competing requests one at a time so only requests this call
-    # actually declined get a notification.
-    competing_cursor = requests.find(
-        {
-            **slot_filter,
-            "_id": {"$ne": request_object_id},
-            "status": "pending",
-        },
-        {"_id": 1},
+    # Decline overlapping pending requests one at a time so only requests
+    # this call actually declined get a notification.
+    competing = await find_overlapping_requests(
+        requests,
+        mechanic_id,
+        appointment_date,
+        accepted_range,
+        ["pending"],
+        exclude_id=request_object_id,
     )
-    competing_ids = [item["_id"] async for item in competing_cursor]
 
-    for competing_id in competing_ids:
+    for competing_request in competing:
         auto_declined = await requests.find_one_and_update(
-            {"_id": competing_id, "status": "pending"},
+            {"_id": competing_request["_id"], "status": "pending"},
             {
                 "$set": {
                     "status": "declined",
                     "responded_at": now_iso,
                     "status_reason": (
-                        "Another request was accepted for this appointment time."
+                        "Another appointment was accepted for an overlapping time."
                     ),
                 }
             },

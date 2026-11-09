@@ -23,6 +23,20 @@ class UserBase(BaseModel):
         return permission in self.permissions
 
 
+class ServiceEstimate(BaseModel):
+    """A mechanic's estimate for one entry in services_offered."""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    estimated_price: Optional[float] = Field(default=None, ge=0, le=100000)
+    estimated_duration_minutes: Optional[int] = Field(
+        default=None,
+        ge=30,
+        le=480,
+        multiple_of=30,
+        description="How long the appointment occupies once accepted.",
+    )
+
+
 class MechanicProfile(BaseModel):
     """
     Shop/business profile for a mechanic, keyed by the Firebase Auth UID.
@@ -41,6 +55,9 @@ class MechanicProfile(BaseModel):
     address: Optional[str] = None
     phone: Optional[str] = None
     services_offered: List[str] = Field(default_factory=list)
+    # None means "leave saved estimates unchanged" so older clients that
+    # don't send this field can't wipe them.
+    service_estimates: Optional[List[ServiceEstimate]] = None
     price_per_hour: Optional[float] = Field(None, ge=0)
     operating_hours: Optional[Dict[str, str]] = None
 
