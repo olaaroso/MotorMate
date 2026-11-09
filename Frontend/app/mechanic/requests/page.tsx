@@ -405,11 +405,16 @@ export default function MechanicRequestsPage() {
         setCompletionError("");
       }
     } catch (updateError) {
-      setError(
+      const message =
         updateError instanceof Error
           ? updateError.message
-          : "Failed to update repair request."
-      );
+          : "Failed to update repair request.";
+
+      if (status === "completed") {
+        setCompletionError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setUpdatingAction(null);
     }

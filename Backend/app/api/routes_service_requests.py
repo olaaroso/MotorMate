@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from bson import ObjectId
@@ -154,6 +154,28 @@ def format_clock(minutes: int) -> str:
     hour, minute = divmod(minutes, 60)
     period = "AM" if hour < 12 else "PM"
     return f"{hour % 12 or 12}:{minute:02d} {period}"
+
+
+def local_now() -> datetime:
+    """Shop-local wall-clock time; appointment dates/times are stored the same way."""
+    return datetime.now()
+
+
+def appointment_end_datetime(request_document: dict) -> Optional[datetime]:
+    time_range = appointment_range(request_document)
+    try:
+        appointment_day = date.fromisoformat(str(request_document.get("appointment_date") or ""))
+    except ValueError:
+        return None
+    if time_range is None:
+        return None
+    return datetime.combine(appointment_day, datetime.min.time()) + timedelta(
+        minutes=time_range[1]
+    )
+
+
+def describe_appointment_end(end: datetime) -> str:
+    return f"{end:%a, %b} {end.day} at {format_clock(end.hour * 60 + end.minute)}"
 
 
 def appointment_outside_hours(
@@ -762,6 +784,21 @@ async def update_service_request_status(
             raise HTTPException(
                 status_code=409,
                 detail="Only an accepted appointment can be marked completed.",
+            )
+
+        appointment_end = appointment_end_datetime(request_document)
+        if appointment_end is None:
+            raise HTTPException(
+                status_code=409,
+                detail="This request has an invalid appointment time.",
+            )
+        if local_now() < appointment_end:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This appointment can't be marked completed until its "
+                    f"scheduled end time ({describe_appointment_end(appointment_end)})."
+                ),
             )
 
         vehicle_id = str(request_document.get("vehicle_id") or "").strip()

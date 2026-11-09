@@ -155,7 +155,12 @@ def test_accept_notifies_customer_and_auto_declined_competitors(db):
 
 
 def test_complete_notifies_customer(db):
-    request = pending_request("customer-1", status="accepted", vehicle_id=db["vehicle_id"])
+    request = pending_request(
+        "customer-1",
+        status="accepted",
+        vehicle_id=db["vehicle_id"],
+        appointment_date=(date.today() - timedelta(days=1)).isoformat(),
+    )
     db["service_requests"].documents.append(request)
 
     update_status(request["_id"], "completed", completed_mileage=51000)
