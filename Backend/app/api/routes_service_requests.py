@@ -12,6 +12,7 @@ from app.models.appointment import (
     ServiceRequestStatus,
     ServiceRequestStatusUpdate,
 )
+from app.services.notifications import create_notification
 from app.services.scheduling import (
     day_key_for,
     parse_hours,
@@ -53,6 +54,68 @@ def format_mechanic_address(mechanic: dict) -> str:
         return ", ".join(part for part in (street, city_line) if part)
 
     return str(mechanic.get("address") or "").strip()
+
+
+MECHANIC_REQUESTS_PAGE = "/mechanic/requests"
+CUSTOMER_APPOINTMENTS_PAGE = "/appointments"
+
+
+def describe_vehicle(request_document: dict) -> str:
+    summary = request_document.get("vehicle_summary") or {}
+    name = " ".join(
+        str(part).strip()
+        for part in (summary.get("year"), summary.get("make"), summary.get("model"))
+        if part and str(part).strip()
+    )
+    return name or "vehicle"
+
+
+def describe_appointment(request_document: dict) -> str:
+    """Human-readable appointment time, e.g. 'Mon, Nov 9 at 9:00 AM'."""
+    date_text = str(request_document.get("appointment_date") or "")
+    time_text = str(request_document.get("appointment_start_time") or "")
+
+    try:
+        when = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return " ".join(part for part in (date_text, time_text) if part)
+
+    hour = when.hour % 12 or 12
+    period = "AM" if when.hour < 12 else "PM"
+    return f"{when:%a, %b} {when.day} at {hour}:{when:%M} {period}"
+
+
+async def notify_customer_of_status(request_document: dict):
+    """Tell the car owner their request was accepted, declined, or completed."""
+    status = request_document.get("status")
+    service = request_document.get("service_requested") or "service"
+    shop = request_document.get("shop_name") or "The shop"
+    when = describe_appointment(request_document)
+
+    if status == "accepted":
+        title = "Service Request Accepted"
+        message = f"{shop} accepted your {service} appointment on {when}."
+    elif status == "declined":
+        title = "Service Request Declined"
+        reason = str(request_document.get("status_reason") or "").strip()
+        message = f"{shop} declined your {service} request for {when}."
+        if reason:
+            message = f"{message} {reason}"
+    elif status == "completed":
+        title = "Service Completed"
+        message = (
+            f"{shop} completed your {service} on your {describe_vehicle(request_document)}. "
+            "It has been added to your Garage service history."
+        )
+    else:
+        return
+
+    await create_notification(
+        request_document.get("customer_id"),
+        title,
+        message,
+        destination=CUSTOMER_APPOINTMENTS_PAGE,
+    )
 
 
 async def ensure_service_request_indexes():
@@ -337,6 +400,17 @@ async def create_service_request(payload: ServiceRequestCreate):
         result = await requests.insert_one(request_document)
         request_document["_id"] = result.inserted_id
 
+        await create_notification(
+            mechanic_id,
+            "New Service Request",
+            (
+                f"{customer_name} requested {service_requested} for their "
+                f"{describe_vehicle(request_document)} on "
+                f"{describe_appointment(request_document)}."
+            ),
+            destination=MECHANIC_REQUESTS_PAGE,
+        )
+
         return {
             "message": "Service request submitted successfully.",
             "request": serialize_mongo_document(request_document),
@@ -559,6 +633,7 @@ async def update_service_request_status(
             )
 
         await sync_completed_service_history(updated)
+        await notify_customer_of_status(updated)
 
         return {
             "message": "Service request marked completed and added to Garage service history.",
@@ -589,6 +664,8 @@ async def update_service_request_status(
 
         if not updated:
             raise HTTPException(status_code=409, detail="Request is no longer pending.")
+
+        await notify_customer_of_status(updated)
 
         return {
             "message": "Service request declined.",
@@ -637,22 +714,36 @@ async def update_service_request_status(
     if not updated:
         raise HTTPException(status_code=409, detail="Request is no longer pending.")
 
-    await requests.update_many(
+    await notify_customer_of_status(updated)
+
+    # Decline competing requests one at a time so only requests this call
+    # actually declined get a notification.
+    competing_cursor = requests.find(
         {
             **slot_filter,
             "_id": {"$ne": request_object_id},
             "status": "pending",
         },
-        {
-            "$set": {
-                "status": "declined",
-                "responded_at": now_iso,
-                "status_reason": (
-                    "Another request was accepted for this appointment time."
-                ),
-            }
-        },
+        {"_id": 1},
     )
+    competing_ids = [item["_id"] async for item in competing_cursor]
+
+    for competing_id in competing_ids:
+        auto_declined = await requests.find_one_and_update(
+            {"_id": competing_id, "status": "pending"},
+            {
+                "$set": {
+                    "status": "declined",
+                    "responded_at": now_iso,
+                    "status_reason": (
+                        "Another request was accepted for this appointment time."
+                    ),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if auto_declined:
+            await notify_customer_of_status(auto_declined)
 
     return {
         "message": "Service request accepted.",

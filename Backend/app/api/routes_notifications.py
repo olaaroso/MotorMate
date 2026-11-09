@@ -11,6 +11,13 @@ router = APIRouter()
 # created before clearing existed stay in the normal view.
 NOT_CLEARED = {"cleared_at": None}
 
+ALLOWED_DESTINATIONS = (
+    "/myTools",
+    "/rentals",
+    "/mechanic/requests",
+    "/appointments",
+)
+
 
 def get_notifications_collection():
     if db_instance.db is None:
@@ -24,7 +31,7 @@ def get_notifications_collection():
 def get_destination(document: dict) -> str:
     # Prefer explicit destinations for future notifications.
     destination = document.get("destination")
-    if destination in ("/myTools", "/rentals"):
+    if destination in ALLOWED_DESTINATIONS:
         return destination
 
     title = document.get("title", "")
