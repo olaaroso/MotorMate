@@ -12,6 +12,7 @@ from app.api import (
     routes_notifications,
     routes_predict,
     routes_service_history,
+    routes_service_request_messages,
     routes_service_requests,
     routes_vin,
 )
@@ -77,6 +78,7 @@ app.include_router(
     tags=["Notifications"],
 )
 app.include_router(routes_service_requests.router)
+app.include_router(routes_service_request_messages.router)
 
 
 @app.get("/")
