@@ -8,6 +8,9 @@ import {
   BarChart3,
   Bell,
   CalendarDays,
+  Clock,
+  ClipboardCheck,
+  AlertTriangle,
   Camera,
   CheckCircle2,
   Edit3,
@@ -23,6 +26,7 @@ import {
 
 import { auth } from "@/lib/firebase";
 import RentalHandoffControls from "../../../components/RentalHandoffControls";
+import OwnerRentalExtensionControls from "@/components/OwnerRentalExtensionControls";
 
 type ToolListing = {
   id: string;
@@ -70,7 +74,31 @@ type RentalRequest = {
     | "completed"
     | "cancelled";
   created_at?: string;
+  extension_request?: { status?: string; original_end_date?: string; requested_end_date?: string };
 };
+
+// Same colors and icon pattern as the mechanic Repair Requests dashboard.
+function rentalStatusStyles(status: RentalRequest["status"], overdue = false) {
+  if (overdue) return { label: "Overdue", className: "bg-red-50 text-red-700 ring-red-100", icon: AlertTriangle };
+  switch (status) {
+    case "pending":
+      return { label: "Pending", className: "bg-amber-50 text-amber-700 ring-amber-100", icon: Clock };
+    case "pickup_pending":
+      return { label: "Pickup pending", className: "bg-amber-50 text-amber-700 ring-amber-100", icon: Clock };
+    case "return_pending":
+      return { label: "Return pending", className: "bg-amber-50 text-amber-700 ring-amber-100", icon: Clock };
+    case "approved":
+      return { label: "Approved", className: "bg-emerald-50 text-emerald-700 ring-emerald-100", icon: CheckCircle2 };
+    case "active":
+      return { label: "Active rental", className: "bg-emerald-50 text-emerald-700 ring-emerald-100", icon: CheckCircle2 };
+    case "completed":
+      return { label: "Returned", className: "bg-blue-50 text-blue-700 ring-blue-100", icon: ClipboardCheck };
+    case "cancelled":
+      return { label: "Cancelled", className: "bg-red-50 text-red-700 ring-red-100", icon: XCircle };
+    case "rejected":
+      return { label: "Rejected", className: "bg-red-50 text-red-700 ring-red-100", icon: XCircle };
+  }
+}
 
 function getTodayString() {
   const now = new Date();
@@ -852,6 +880,9 @@ export default function MyToolsPage() {
 
     const isCurrentlyRented =
       Boolean(currentRental);
+    const overdue = Boolean(currentRental && ["active", "return_pending"].includes(currentRental.status) && currentRental.end_date < today);
+    const rentalBadge = currentRental ? rentalStatusStyles(currentRental.status, overdue) : null;
+    const RentalStatusIcon = rentalBadge?.icon;
 
     return (
       <article
@@ -926,23 +957,24 @@ export default function MyToolsPage() {
               Status
             </p>
 
-            {isCurrentlyRented ? (
-              <p className="text-xs font-medium text-blue-600">
-                Currently rented
-              </p>
+            {rentalBadge && RentalStatusIcon ? (
+              <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${rentalBadge.className}`}>
+                <RentalStatusIcon size={13} />
+                {rentalBadge.label}
+              </span>
             ) : tool.availability === "available" ? (
-              <p className="text-xs font-medium text-green-600">
-                Available for rent
-              </p>
+              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                <CheckCircle2 size={13} /> Available for rent
+              </span>
             ) : (
-              <p className="text-xs font-medium text-gray-500">
-                Unavailable
-              </p>
+              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 ring-1 ring-slate-200">
+                <XCircle size={13} /> Unavailable
+              </span>
             )}
           </div>
 
           {currentRental && (
-            <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+            <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
               <p className="text-sm font-bold text-[#001F3F]">
                 Current Rental
               </p>
@@ -1118,6 +1150,19 @@ export default function MyToolsPage() {
         </Link>
       </div>
 
+      {/* EXTENSION REQUESTS: owners review and approve new return dates */}
+      {!rentalRequestsLoading && rentalRequests.some(r => r.status === "active" && r.extension_request?.status === "pending") && (
+        <section className="mt-6 rounded-2xl border bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-bold text-[#001F3F]">Rental Extension Requests</h2>
+          <p className="mt-1 text-sm text-gray-500">Review requests from borrowers who currently have your tools.</p>
+          <div className="mt-3 space-y-3">
+            {rentalRequests.filter(r => r.status === "active" && r.extension_request?.status === "pending").map(r => (
+              <OwnerRentalExtensionControls key={r.id} rental={r} onUpdated={refreshHandoffData} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* PICKUP AND RETURN HANDOFFS */}
       {!rentalRequestsLoading && rentalRequests.some((r) =>
         r.status === "pickup_pending" || r.status === "return_pending" ||
@@ -1232,9 +1277,14 @@ export default function MyToolsPage() {
                     )}
 
                     <div className="flex-1">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-                        Rental Request
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
+                          Rental Request
+                        </p>
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 ring-1 ring-amber-100">
+                          <Clock size={13} /> Pending
+                        </span>
+                      </div>
 
                       <h3 className="mt-1 text-lg font-bold text-[#001F3F]">
                         {request.tool_name}
@@ -1357,7 +1407,7 @@ export default function MyToolsPage() {
                 </p>
               </div>
 
-              <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
                 {upcomingRentalRequests.length}
               </span>
             </div>
@@ -1417,8 +1467,8 @@ export default function MyToolsPage() {
                         </div>
 
                         <div className="flex flex-col gap-2">
-                          <div className="rounded-xl bg-blue-50 px-4 py-3 text-center text-sm font-semibold text-blue-700">
-                            Upcoming
+                          <div className="inline-flex items-center justify-center gap-1.5 rounded-full bg-emerald-50 px-4 py-2 text-center text-sm font-semibold text-emerald-700 ring-1 ring-emerald-100">
+                            <CheckCircle2 size={13} /> Approved — Upcoming
                           </div>
 
                           <button
@@ -1550,7 +1600,7 @@ export default function MyToolsPage() {
                 </p>
               </div>
 
-              <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">
                 {rentedTools.length}
               </span>
             </div>
