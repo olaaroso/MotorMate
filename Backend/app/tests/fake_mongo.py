@@ -1,5 +1,6 @@
 """Small in-memory stand-ins for the Motor collection methods the routes use."""
 
+from copy import deepcopy
 from types import SimpleNamespace
 
 from bson import ObjectId
@@ -125,9 +126,9 @@ class FakeCollection:
     async def find_one_and_update(self, query, update, return_document=None, upsert=False):
         for doc in self.documents:
             if matches(doc, query):
-                before = dict(doc)
+                before = deepcopy(doc)
                 apply_update(doc, update)
-                return dict(doc) if return_document == ReturnDocument.AFTER else before
+                return deepcopy(doc) if return_document == ReturnDocument.AFTER else before
         if upsert:
             document = {
                 key: value

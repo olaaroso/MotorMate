@@ -6,8 +6,14 @@ from fastapi import APIRouter, HTTPException, Query
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from app.api.routes_service_requests import (
+    CUSTOMER_APPOINTMENTS_PAGE,
+    MECHANIC_REQUESTS_PAGE,
+    describe_appointment,
+)
 from app.core.database import db_instance
 from app.models.messages import MessagingView, ServiceRequestMessageCreate
+from app.services.notifications import create_notification
 
 logger = logging.getLogger("vehicle_api")
 
@@ -114,6 +120,31 @@ async def discard_message(messages, message_id: ObjectId):
         await messages.delete_one({"_id": message_id})
     except Exception:
         logger.exception("Failed to discard unsent message %s", message_id)
+
+
+async def notify_recipient_of_message(request_document: dict, recipient_role: str):
+    """Points the recipient at the request; the message body stays out of notifications."""
+    request_id = str(request_document["_id"])
+    service = request_document.get("service_requested") or "service"
+    when = describe_appointment(request_document)
+
+    if recipient_role == "mechanic":
+        customer = request_document.get("customer_name") or "A customer"
+        await create_notification(
+            request_document.get("mechanic_id"),
+            "New Message",
+            f"{customer} sent you a message about their {service} request for {when}.",
+            destination=f"{MECHANIC_REQUESTS_PAGE}?request={request_id}",
+        )
+        return
+
+    shop = request_document.get("shop_name") or "MotorMate Mechanic"
+    await create_notification(
+        request_document.get("customer_id"),
+        f"New Message from {shop}",
+        f"{shop} sent you a message about your {service} request for {when}.",
+        destination=f"{CUSTOMER_APPOINTMENTS_PAGE}?request={request_id}",
+    )
 
 
 def serialize_message(document: dict) -> dict:
@@ -279,7 +310,7 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
         require_writable(request_status(latest) if latest else "unavailable")
 
         # Sending implies the sender has seen the thread.
-        await get_collection("conversations").update_one(
+        before_update = await get_collection("conversations").find_one_and_update(
             {"_id": conversation["_id"]},
             {
                 "$set": {
@@ -290,12 +321,20 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
                 },
                 "$inc": {f"unread_count.{recipient_role}": 1},
             },
+            return_document=ReturnDocument.BEFORE,
         )
+        if before_update is None:
+            raise RuntimeError("Conversation disappeared while sending.")
     except Exception as error:
         await discard_message(messages, message_document["_id"])
         if isinstance(error, HTTPException):
             raise
         raise HTTPException(status_code=500, detail="Failed to send message.")
+
+    # The atomic $inc means only the message that starts an unread streak
+    # sees 0 here, so a burst of messages produces one notification.
+    if unread_count_for(before_update, recipient_role) == 0:
+        await notify_recipient_of_message(latest, recipient_role)
 
     return {
         "message": "Message sent.",

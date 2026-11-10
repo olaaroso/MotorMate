@@ -9,7 +9,8 @@ from pymongo.errors import DuplicateKeyError
 
 from app.api import routes_service_request_messages as routes
 from app.models.messages import ServiceRequestMessageCreate
-from app.tests.fake_mongo import FakeCollection
+from app.services import notifications as notification_service
+from app.tests.fake_mongo import BrokenCollection, FakeCollection
 
 CUSTOMER = "customer-1"
 MECHANIC = "mechanic-1"
@@ -23,7 +24,9 @@ def db(monkeypatch):
         "messages": FakeCollection(),
         "notifications": FakeCollection(),
     }
-    monkeypatch.setattr(routes, "db_instance", SimpleNamespace(db=database))
+    handle = SimpleNamespace(db=database)
+    monkeypatch.setattr(routes, "db_instance", handle)
+    monkeypatch.setattr(notification_service, "db_instance", handle)
     monkeypatch.setattr(routes, "_indexes_ready", True)
     return database
 
@@ -416,8 +419,12 @@ def test_request_closing_during_send_discards_the_message(db, status):
 
 
 class FailingConversationUpdates(FakeCollection):
-    async def update_one(self, query, update, upsert=False):
-        raise RuntimeError("database down")
+    """Conversations can be created, but the post-send state update fails."""
+
+    async def find_one_and_update(self, query, update, return_document=None, upsert=False):
+        if not upsert:
+            raise RuntimeError("database down")
+        return await super().find_one_and_update(query, update, return_document, upsert)
 
 
 def test_failed_conversation_update_discards_the_message(db):
@@ -444,10 +451,103 @@ def test_failed_cleanup_still_reports_the_send_failure(db):
     assert error_from(send, request_id).status_code == 500
 
 
-def test_messaging_does_not_create_notifications_yet(db):
+def notifications_for(db, user_id):
+    return [doc for doc in db["notifications"].documents if doc["user_id"] == user_id]
+
+
+def test_customer_message_notifies_the_mechanic(db):
+    request_id = stored_request(db)
+
+    send(request_id, "Can I drop it off early?", actor_id=CUSTOMER, view="customer")
+
+    [alert] = notifications_for(db, MECHANIC)
+    assert alert["title"] == "New Message"
+    assert alert["message"] == (
+        "Customer One sent you a message about their Oil Change request "
+        "for Fri, Nov 20 at 9:00 AM."
+    )
+    assert alert["destination"] == f"/mechanic/requests?request={request_id}"
+    assert alert["is_read"] is False
+    assert notifications_for(db, CUSTOMER) == []
+
+
+def test_mechanic_message_notifies_the_customer(db):
     request_id = stored_request(db)
 
     send(request_id)
-    send(request_id, actor_id=CUSTOMER, view="customer")
+
+    [alert] = notifications_for(db, CUSTOMER)
+    assert alert["title"] == "New Message from Northside Auto"
+    assert alert["message"] == (
+        "Northside Auto sent you a message about your Oil Change request "
+        "for Fri, Nov 20 at 9:00 AM."
+    )
+    assert alert["destination"] == f"/appointments?request={request_id}"
+    assert notifications_for(db, MECHANIC) == []
+
+
+def test_notifications_never_include_the_message_body(db):
+    request_id = stored_request(db)
+    secret = "My gate code is 4321"
+
+    send(request_id, secret, actor_id=CUSTOMER, view="customer")
+    send(request_id, secret)
+
+    assert len(db["notifications"].documents) == 2
+    for alert in db["notifications"].documents:
+        assert "4321" not in repr(alert)
+
+
+def test_messages_during_an_unread_streak_notify_once(db):
+    request_id = stored_request(db)
+
+    send(request_id, "one", actor_id=CUSTOMER, view="customer")
+    send(request_id, "two", actor_id=CUSTOMER, view="customer")
+    send(request_id, "three", actor_id=CUSTOMER, view="customer")
+
+    assert len(notifications_for(db, MECHANIC)) == 1
+    assert conversation(db)["unread_count"]["mechanic"] == 3
+
+
+def test_marking_read_starts_a_new_notification_streak(db):
+    request_id = stored_request(db)
+    send(request_id, "one", actor_id=CUSTOMER, view="customer")
+    send(request_id, "two", actor_id=CUSTOMER, view="customer")
+
+    mark_read(request_id)
+    send(request_id, "three", actor_id=CUSTOMER, view="customer")
+
+    assert len(notifications_for(db, MECHANIC)) == 2
+
+
+def test_replying_does_not_notify_the_sender_again(db):
+    request_id = stored_request(db)
+
+    send(request_id, "question", actor_id=CUSTOMER, view="customer")
+    send(request_id, "answer")
+    send(request_id, "follow-up", actor_id=CUSTOMER, view="customer")
+
+    # The mechanic never marked the thread read, but replying cleared their
+    # unread count, so the customer's follow-up starts a new streak.
+    assert len(notifications_for(db, MECHANIC)) == 2
+    assert len(notifications_for(db, CUSTOMER)) == 1
+
+
+def test_notification_failure_does_not_fail_the_send(db):
+    request_id = stored_request(db)
+    db["notifications"] = BrokenCollection()
+
+    result = send(request_id, actor_id=CUSTOMER, view="customer")
+
+    assert result["message"] == "Message sent."
+    assert len(db["messages"].documents) == 1
+    assert conversation(db)["unread_count"]["mechanic"] == 1
+
+
+def test_discarded_message_does_not_notify(db):
+    request_id = stored_request(db)
+    db["messages"] = ClosingMessages(db["service_requests"], "declined")
+
+    error_from(send, request_id, actor_id=CUSTOMER, view="customer")
 
     assert db["notifications"].documents == []

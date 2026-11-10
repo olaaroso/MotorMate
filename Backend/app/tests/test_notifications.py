@@ -187,6 +187,84 @@ def test_clear_all_only_affects_that_users_visible_notifications(notifications):
     )) == ["Someone else"]
 
 
+REQUEST_ID = str(ObjectId())
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        f"/mechanic/requests?request={REQUEST_ID}",
+        f"/appointments?request={REQUEST_ID}",
+    ],
+)
+def test_request_deep_links_survive_serialization(monkeypatch, destination):
+    collection = FakeCollection(
+        [notification("user-1", "New Message", "2026-11-02T10:00:00+00:00", destination=destination)]
+    )
+    monkeypatch.setattr(routes_notifications.db_instance, "db", {"notifications": collection})
+
+    [result] = asyncio.run(
+        routes_notifications.get_user_notifications("user-1", include_cleared=False)
+    )
+
+    assert result["destination"] == destination
+
+
+@pytest.mark.parametrize(
+    ("destination", "expected"),
+    [
+        ("/appointments?request=not-an-id", "/appointments"),
+        (f"/appointments?request={REQUEST_ID.upper()}", "/appointments"),
+        (f"/mechanic/requests?request={REQUEST_ID}&next=https://evil.example", "/mechanic/requests"),
+        (f"/mechanic/requests?other={REQUEST_ID}", "/mechanic/requests"),
+        (f"/mechanic/requests?request={REQUEST_ID}#top", "/mechanic/requests"),
+        (f"/rentals?request={REQUEST_ID}", "/rentals"),
+        (f"/myTools?request={REQUEST_ID}", "/myTools"),
+        ("/appointments?", "/appointments"),
+    ],
+)
+def test_malformed_request_links_fall_back_to_the_page(destination, expected):
+    assert routes_notifications.get_destination(
+        {"title": "New Message", "message": "", "destination": destination}
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        f"https://evil.example/appointments?request={REQUEST_ID}",
+        f"//evil.example/appointments?request={REQUEST_ID}",
+        f"/appointments/../admin?request={REQUEST_ID}",
+        "/garage",
+        "",
+        None,
+        123,
+    ],
+)
+def test_unknown_destinations_use_the_legacy_fallback(destination):
+    assert routes_notifications.get_destination(
+        {"title": "New Message", "message": "", "destination": destination}
+    ) == "/rentals"
+
+
+@pytest.mark.parametrize(
+    ("document", "expected"),
+    [
+        ({"destination": "/myTools"}, "/myTools"),
+        ({"destination": "/rentals"}, "/rentals"),
+        ({"destination": "/mechanic/requests"}, "/mechanic/requests"),
+        ({"destination": "/appointments"}, "/appointments"),
+        ({"title": "New Rental Request!"}, "/myTools"),
+        ({"title": "Rental Cancelled", "message": "The borrower cancelled the rental."}, "/myTools"),
+        ({"title": "Tool Pickup Confirmed"}, "/myTools"),
+        ({"title": "Tool Return Awaiting Confirmation"}, "/myTools"),
+        ({"title": "Rental Approved"}, "/rentals"),
+    ],
+)
+def test_existing_destinations_still_work(document, expected):
+    assert routes_notifications.get_destination(document) == expected
+
+
 def test_create_notification_stores_unread_notification(monkeypatch):
     collection = FakeCollection()
     monkeypatch.setattr(

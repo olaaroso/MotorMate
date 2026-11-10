@@ -1,4 +1,5 @@
 
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
@@ -18,6 +19,34 @@ ALLOWED_DESTINATIONS = (
     "/appointments",
 )
 
+# Pages that can open one service request via ?request=<ObjectId>.
+REQUEST_LINK_DESTINATIONS = (
+    "/mechanic/requests",
+    "/appointments",
+)
+REQUEST_LINK_QUERY = re.compile(r"request=([0-9a-f]{24})")
+
+
+def safe_destination(destination) -> str | None:
+    """
+    Returns an allowed in-app path, keeping the query only when it is exactly
+    request=<ObjectId> on a page that supports it. A malformed query falls
+    back to the bare allowed path; anything else returns None.
+    """
+    if not isinstance(destination, str):
+        return None
+
+    path, has_query, query = destination.partition("?")
+    if path not in ALLOWED_DESTINATIONS:
+        return None
+    if not has_query:
+        return path
+
+    link = REQUEST_LINK_QUERY.fullmatch(query)
+    if path in REQUEST_LINK_DESTINATIONS and link and ObjectId.is_valid(link.group(1)):
+        return destination
+    return path
+
 
 def get_notifications_collection():
     if db_instance.db is None:
@@ -30,8 +59,8 @@ def get_notifications_collection():
 
 def get_destination(document: dict) -> str:
     # Prefer explicit destinations for future notifications.
-    destination = document.get("destination")
-    if destination in ALLOWED_DESTINATIONS:
+    destination = safe_destination(document.get("destination"))
+    if destination:
         return destination
 
     title = document.get("title", "")
