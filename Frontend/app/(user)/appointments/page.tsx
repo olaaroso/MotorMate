@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   ArrowRight,
@@ -23,8 +24,10 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import ServiceRequestMessages from "@/components/ServiceRequestMessages";
 import StatCard from "@/components/StatCard";
 import { auth } from "@/lib/firebase";
+import { isServiceRequestId } from "@/lib/messages";
 import {
   describeEstimate,
   hasEstimateValues,
@@ -177,7 +180,30 @@ function statusStyles(status: RequestStatus) {
   };
 }
 
+function requestCardId(requestId: string) {
+  return `request-${requestId}`;
+}
+
 export default function AppointmentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[60vh] items-center justify-center">
+          <Loader2 size={32} className="animate-spin text-[#001F3F]" />
+        </div>
+      }
+    >
+      <AppointmentsContent />
+    </Suspense>
+  );
+}
+
+function AppointmentsContent() {
+  const searchParams = useSearchParams();
+  const linkedRequestId = searchParams.get("request");
+  const [handledLinkId, setHandledLinkId] = useState<string | null>(null);
+  const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
+  const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState("");
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [activeFilter, setActiveFilter] = useState<RequestFilter>("all");
@@ -271,6 +297,35 @@ export default function AppointmentsPage() {
       );
     });
   }, [activeFilter, requests]);
+
+  // Notification deep links: /appointments?request=<id> opens that
+  // request's messages once the customer's own requests have loaded. Each
+  // link is handled once, adjusting state during render rather than in an effect.
+  if (
+    !loading &&
+    isServiceRequestId(linkedRequestId) &&
+    handledLinkId !== linkedRequestId
+  ) {
+    setHandledLinkId(linkedRequestId);
+    const linked = requests.find((request) => request.id === linkedRequestId);
+
+    if (linked) {
+      if (activeFilter !== "all" && activeFilter !== linked.status) {
+        setActiveFilter("all");
+      }
+      setOpenThreadId(linked.id);
+      setScrollTargetId(linked.id);
+    } else if (customerId) {
+      setNotice("That appointment is no longer in your list.");
+    }
+  }
+
+  useEffect(() => {
+    if (!scrollTargetId) return;
+    document
+      .getElementById(requestCardId(scrollTargetId))
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [scrollTargetId]);
 
   const refreshRequests = async () => {
     if (!customerId) return;
@@ -458,9 +513,16 @@ export default function AppointmentsPage() {
                 <AppointmentCard
                   key={request.id}
                   request={request}
+                  customerId={customerId}
                   removing={removingRequestId === request.id}
                   removeDisabled={Boolean(removingRequestId)}
                   onRemove={() => void removeCompletedRequest(request)}
+                  messagesOpen={openThreadId === request.id}
+                  onToggleMessages={() =>
+                    setOpenThreadId((current) =>
+                      current === request.id ? null : request.id
+                    )
+                  }
                 />
               ))}
             </div>
@@ -473,20 +535,29 @@ export default function AppointmentsPage() {
 
 function AppointmentCard({
   request,
+  customerId,
   removing,
   removeDisabled,
   onRemove,
+  messagesOpen,
+  onToggleMessages,
 }: {
   request: ServiceRequest;
+  customerId: string;
   removing: boolean;
   removeDisabled: boolean;
   onRemove: () => void;
+  messagesOpen: boolean;
+  onToggleMessages: () => void;
 }) {
   const status = statusStyles(request.status);
   const StatusIcon = status.icon;
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-slate-300 sm:p-6">
+    <article
+      id={requestCardId(request.id)}
+      className="scroll-mt-28 rounded-2xl border border-slate-200 bg-white p-5 transition hover:border-slate-300 sm:p-6"
+    >
       <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start gap-3">
@@ -597,6 +668,16 @@ function AppointmentCard({
             {status.helper}
             {request.status_reason ? ` — ${request.status_reason}` : ""}
           </div>
+
+          <ServiceRequestMessages
+            requestId={request.id}
+            actorId={customerId}
+            view="customer"
+            counterpartName={request.shop_name || "MotorMate Mechanic"}
+            requestStatus={request.status}
+            open={messagesOpen}
+            onToggle={onToggleMessages}
+          />
         </div>
 
         <div className="flex shrink-0 flex-row gap-2 xl:flex-col">
