@@ -11,7 +11,10 @@ from app.api import (
     routes_mechanic,
     routes_notifications,
     routes_predict,
+    routes_rental_extensions,
+    routes_tool_handoff,
     routes_service_history,
+    routes_service_request_messages,
     routes_service_requests,
     routes_vin,
 )
@@ -70,6 +73,8 @@ app.include_router(routes_predict.router)
 app.include_router(routes_mechanic.router)
 app.include_router(routes_location.router)
 app.include_router(routes_diy.router)
+app.include_router(routes_rental_extensions.router)
+app.include_router(routes_tool_handoff.router)
 app.include_router(routes_service_history.router)
 app.include_router(
     routes_notifications.router,
@@ -77,6 +82,7 @@ app.include_router(
     tags=["Notifications"],
 )
 app.include_router(routes_service_requests.router)
+app.include_router(routes_service_request_messages.router)
 
 
 @app.get("/")
