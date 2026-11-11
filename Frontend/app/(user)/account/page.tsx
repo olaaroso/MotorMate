@@ -1,496 +1,158 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import {
-  CheckCircle2,
-  Mail,
-  MapPin,
-  Phone,
-  Save,
-  User,
-  Plus,
-  Loader2,
-  Camera,
-} from "lucide-react";
-
+import { useEffect, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
-
+import { Camera, CheckCircle2, Loader2, Mail, MapPin, Phone, Save, User, Truck } from "lucide-react";
 import { auth, db } from "@/lib/firebase";
 
 export default function AccountSettingsPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-
   const [profileImage, setProfileImage] = useState("");
-  const [uploadingImage, setUploadingImage] = useState(false);
-
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [zipCode, setZipCode] = useState("");
-
+  const [streetAddress, setStreetAddress] = useState("");
+  const [defaultPickupInstructions, setDefaultPickupInstructions] = useState("");
+  const [defaultDropoffInstructions, setDefaultDropoffInstructions] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
   const [error, setError] = useState("");
-
-  const [isPhotoMenuOpen, setIsPhotoMenuOpen] = useState(false);
+  const [photoMenu, setPhotoMenu] = useState(false);
   const photoMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (photoMenuRef.current && !photoMenuRef.current.contains(event.target as Node)) {
-        setIsPhotoMenuOpen(false);
-      }
+    const close = (event: MouseEvent) => {
+      if (photoMenuRef.current && !photoMenuRef.current.contains(event.target as Node)) setPhotoMenu(false);
     };
-
-    const handleScroll = () => {
-      setIsPhotoMenuOpen(false);
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-    window.addEventListener("scroll", handleScroll, true);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      window.removeEventListener("scroll", handleScroll, true);
-    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      if (!user) {
-        setLoading(false);
-        return;
-      }
-
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      if (!user) { setLoading(false); return; }
       try {
-        // Email comes directly from Firebase Authentication
         setEmail(user.email || "");
-
-        // Extra MotorMate profile information comes from Firestore
-        const userRef = doc(db, "users", user.uid);
-        const userSnapshot = await getDoc(userRef);
-
-        if (userSnapshot.exists()) {
-          const data = userSnapshot.data();
-
-          setPhone(data.phone || "");
-          setFirstName(data.firstName || "");
-          setLastName(data.lastName || "");
-          setProfileImage(data.profileImage || "");
-          setCity(data.city || "");
-          setState(data.state || "");
-          setZipCode(data.zipCode || "");
+        const snapshot = await getDoc(doc(db, "users", user.uid));
+        if (snapshot.exists()) {
+          const d = snapshot.data();
+          setPhone(d.phone || "");
+          setFirstName(d.firstName || "");
+          setLastName(d.lastName || "");
+          setProfileImage(d.profileImage || "");
+          setCity(d.city || "");
+          setState(d.state || "");
+          setZipCode(d.zipCode || "");
+          setStreetAddress(d.streetAddress || "");
+          setDefaultPickupInstructions(d.defaultPickupInstructions || "");
+          setDefaultDropoffInstructions(d.defaultDropoffInstructions || "");
         }
-      } catch (err) {
-        console.error("Failed to load profile:", err);
+      } catch (e) {
+        console.error("Failed to load account:", e);
         setError("Unable to load your account information.");
-      } finally {
-        setLoading(false);
-      }
+      } finally { setLoading(false); }
     });
-
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
     const user = auth.currentUser;
-
-    if (!user) {
-      setError("You must be signed in to update your profile.");
-      return;
-    }
-
+    if (!user) { setError("You must be signed in to update your account."); return; }
+    setSaving(true); setSaved(false); setError("");
     try {
-      setSaving(true);
-      setError("");
-      setSaved(false);
-
-      await setDoc(
-        doc(db, "users", user.uid),
-        {
-          email: user.email,
-          phone,
-          firstName,
-          lastName,
-          profileImage,
-          city,
-          state,
-          zipCode,
-        },
-        {
-          merge: true,
-        }
-      );
-
+      await setDoc(doc(db, "users", user.uid), {
+        email: user.email, phone, firstName, lastName, profileImage, city, state, zipCode,
+        streetAddress: streetAddress.trim(),
+        defaultPickupInstructions: defaultPickupInstructions.trim(),
+        defaultDropoffInstructions: defaultDropoffInstructions.trim(),
+      }, { merge: true });
       setSaved(true);
+    } catch (e) {
+      console.error("Save account failed", e);
+      setError("Could not save your account details.");
+    } finally { setSaving(false); }
+  }
 
-      setTimeout(() => {
-        setSaved(false);
-      }, 2500);
-    } catch (err) {
-      console.error("Failed to save profile:", err);
-      setError("Something went wrong while saving your profile.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  async function uploadImage(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-
+    if (!file.type.startsWith("image/")) { setError("Choose an image file."); return; }
+    setUploadingImage(true); setError(""); setPhotoMenu(false);
     try {
-      setUploadingImage(true);
-      setError("");
-
       const formData = new FormData();
       formData.append("file", file);
       formData.append("upload_preset", "motormate_tools");
-
-      const res = await fetch(
-          "https://api.cloudinary.com/v1_1/omki7dtk/image/upload",
-          {
-            method: "POST",
-            body: formData,
-          }
-      );
-
-      const data = await res.json();
-      if (data.secure_url) {
-        setProfileImage(data.secure_url);
-      } else {
-        throw new Error("Upload failed");
-      }
-    } catch (err) {
-      console.error("Image upload error:", err);
-      setError("Failed to upload profile picture.");
-    } finally {
-      setUploadingImage(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="mx-auto max-w-5xl p-8">
-        <p className="text-gray-500">Loading account...</p>
-      </div>
-    );
+      const response = await fetch("https://api.cloudinary.com/v1_1/omki7dtk/image/upload", { method: "POST", body: formData });
+      const result = await response.json();
+      if (!response.ok || !result.secure_url) throw new Error("Photo upload failed");
+      setProfileImage(result.secure_url);
+    } catch (e) { console.error(e); setError("Failed to upload profile picture."); }
+    finally { setUploadingImage(false); event.target.value = ""; }
   }
 
-  const initials =
-    `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() || "?";
+  const field = "mt-2 w-full rounded-xl border border-gray-300 bg-white px-4 py-3 outline-none focus:border-[#001F3F]";
+  const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase() || "?";
+  if (loading) return <div className="mx-auto max-w-5xl p-8 text-gray-500">Loading account...</div>;
 
   return (
     <div className="mx-auto max-w-5xl p-8">
-      {/* HEADER */}
-
-      <section>
-        <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">
-          Account
-        </p>
-
-        <h1 className="mt-1 text-3xl font-bold text-[#001F3F]">
-          Account Settings
-        </h1>
-
-        <p className="mt-2 text-gray-500">
-          Manage your personal information and MotorMate profile.
-        </p>
-      </section>
-
-      {/* SUCCESS */}
-
-      {saved && (
-        <div className="mt-6 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          <CheckCircle2 size={18} />
-          Profile changes saved.
-        </div>
-      )}
-
-      {/* ERROR */}
-
-      {error && (
-        <div className="mt-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="mt-8 space-y-6">
-        {/* PROFILE SUMMARY */}
-
+      <p className="text-sm font-semibold uppercase tracking-wider text-blue-600">Account</p>
+      <h1 className="mt-1 text-3xl font-bold text-[#001F3F]">Account Settings</h1>
+      <p className="mt-2 text-gray-500">Manage your profile and private ToolDrop handoff defaults.</p>
+      {saved && <div role="status" className="mt-6 flex gap-2 rounded-xl border border-green-200 bg-green-50 p-4 text-green-700"><CheckCircle2 size={19}/> Profile and ToolDrop defaults saved.</div>}
+      {error && <div role="alert" className="mt-6 rounded-xl border border-red-200 bg-red-50 p-4 text-red-700">{error}</div>}
+      <form onSubmit={save} className="mt-8 space-y-6">
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
           <div className="flex items-center gap-5">
-
-            {/* INTERACTIVE AVATAR WRAPPER */}
-            <div className="relative h-20 w-20 shrink-0" ref={photoMenuRef}>
-
-              <div
-                  onClick={() => !uploadingImage && setIsPhotoMenuOpen((prev) => !prev)}
-                  className="group relative flex h-full w-full cursor-pointer items-center justify-center overflow-hidden rounded-full bg-[#001F3F] text-xl font-bold text-white shadow-sm"
-              >
-                {profileImage ? (
-                    <img
-                        src={profileImage}
-                        alt="Profile"
-                        className="h-full w-full object-cover"
-                    />
-                ) : (
-                    <span>{initials}</span>
-                )}
-
-                {/* HOVER OVERLAY */}
-                <div className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/40 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                  {uploadingImage ? (
-                      <Loader2 size={24} className="animate-spin text-white" />
-                  ) : (
-                      <Camera size={24} className="text-white" />
-                  )}
-                </div>
-              </div>
-
-              {/* DROPDOWN MENU */}
-              {isPhotoMenuOpen && (
-                  <div className="absolute left-1/2 top-[90px] z-10 flex w-max -translate-x-1/2 flex-col rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-                    <label className="flex w-full cursor-pointer items-center whitespace-nowrap px-4 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
-                      Upload a photo...
-                      <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => {
-                            setIsPhotoMenuOpen(false);
-                            handleImageUpload(e);
-                          }}
-                          disabled={uploadingImage}
-                      />
-                    </label>
-
-                    {profileImage && (
-                        <button
-                            type="button"
-                            onClick={() => {
-                              setProfileImage("");
-                              setIsPhotoMenuOpen(false);
-                            }}
-                            className="flex w-full items-center whitespace-nowrap px-4 py-1.5 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-                        >
-                          Remove photo
-                        </button>
-                    )}
-                  </div>
-              )}
+            <div ref={photoMenuRef} className="relative h-20 w-20 shrink-0">
+              <button type="button" onClick={() => setPhotoMenu(x => !x)} className="group relative flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-[#001F3F] font-bold text-white">
+                {profileImage ? <img src={profileImage} alt="Profile" className="h-full w-full object-cover"/> : initials}
+                <span className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100">{uploadingImage ? <Loader2 className="animate-spin"/> : <Camera/>}</span>
+              </button>
+              {photoMenu && <div className="absolute left-0 top-20 z-20 rounded-lg border bg-white p-3 shadow-lg">
+                <label className="cursor-pointer whitespace-nowrap text-sm">Upload photo<input type="file" accept="image/*" onChange={uploadImage} className="hidden"/></label>
+                {profileImage && <button type="button" onClick={() => { setProfileImage(""); setPhotoMenu(false); }} className="mt-2 block text-sm text-red-600">Remove photo</button>}
+              </div>}
             </div>
-            <div>
-              <h2 className="text-xl font-bold text-[#001F3F]">
-                {firstName || lastName
-                    ? `${firstName} ${lastName}`.trim()
-                    : "Your Profile"}
-              </h2>
-
-              <p className="mt-1 text-sm text-gray-500">
-                {email}
-              </p>
-            </div>
+            <div><h2 className="text-xl font-bold text-[#001F3F]">{`${firstName} ${lastName}`.trim() || "Your Profile"}</h2><p className="mt-1 text-sm text-gray-500">{email}</p></div>
           </div>
         </section>
-
-        {/* PERSONAL INFORMATION */}
-
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-3 border-b pb-5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#001F3F]">
-              <User size={20} />
-            </div>
-
-            <div>
-              <h2 className="text-xl font-bold text-[#001F3F]">
-                Personal Information
-              </h2>
-
-              <p className="text-sm text-gray-500">
-                Update your basic account details.
-              </p>
-            </div>
-          </div>
-
+          <h2 className="flex items-center gap-3 border-b pb-5 text-xl font-bold text-[#001F3F]"><User size={20}/> Personal Information</h2>
           <div className="mt-6 grid gap-5 md:grid-cols-2">
-            {/* FIRST NAME */}
-
-            <div>
-              <label className="text-sm font-semibold text-gray-700">
-                First Name
-              </label>
-
-              <input
-                type="text"
-                value={firstName}
-                onChange={(e) => setFirstName(e.target.value)}
-                placeholder="Enter first name"
-                className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
-              />
-            </div>
-
-            {/* LAST NAME */}
-
-            <div>
-              <label className="text-sm font-semibold text-gray-700">
-                Last Name
-              </label>
-
-              <input
-                type="text"
-                value={lastName}
-                onChange={(e) => setLastName(e.target.value)}
-                placeholder="Enter last name"
-                className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F]"
-              />
-            </div>
-
-            {/* EMAIL */}
-
-            <div>
-              <label className="text-sm font-semibold text-gray-700">
-                Email Address
-              </label>
-
-              <div className="relative mt-2">
-                <Mail
-                  size={17}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
-                />
-
-                <input
-                  type="email"
-                  value={email}
-                  readOnly
-                  className="w-full cursor-not-allowed rounded-xl border border-gray-300 bg-gray-100 py-3 pl-11 pr-4 text-gray-500 outline-none"
-                />
-              </div>
-
-              <p className="mt-1 text-xs text-gray-400">
-                This email is used to sign in and cannot be changed here
-              </p>
-            </div>
-
-            {/* PHONE */}
-
-            <div>
-              <label className="text-sm font-semibold text-gray-700">
-                Phone Number
-              </label>
-
-              <div className="relative mt-2">
-                <Phone
-                  size={17}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"
-                />
-
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  placeholder="(555) 123-4567"
-                  className="w-full rounded-xl border border-gray-300 py-3 pl-11 pr-4 outline-none focus:border-[#001F3F]"
-                />
-              </div>
-            </div>
+            <label className="text-sm font-semibold text-gray-700">First Name<input value={firstName} onChange={e => setFirstName(e.target.value)} className={field}/></label>
+            <label className="text-sm font-semibold text-gray-700">Last Name<input value={lastName} onChange={e => setLastName(e.target.value)} className={field}/></label>
+            <label className="text-sm font-semibold text-gray-700">Email Address<div className="relative"><Mail className="absolute left-3 top-5 text-gray-400" size={17}/><input type="email" readOnly value={email} className={`${field} bg-gray-100 pl-10 text-gray-500`}/></div></label>
+            <label className="text-sm font-semibold text-gray-700">Phone Number<div className="relative"><Phone className="absolute left-3 top-5 text-gray-400" size={17}/><input type="tel" value={phone} onChange={e => setPhone(e.target.value)} className={`${field} pl-10`}/></div></label>
           </div>
         </section>
-
-        {/* LOCATION */}
-
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
-          <div className="flex items-center gap-3 border-b pb-5">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#001F3F]">
-              <MapPin size={20} />
-            </div>
-
-            <div>
-              <h2 className="text-xl font-bold text-[#001F3F]">
-                Location
-              </h2>
-
-              <p className="text-sm text-gray-500">
-                Used for nearby mechanics and ToolDrop listings.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-6 grid gap-5 md:grid-cols-3">
-            <div className="md:col-span-2">
-              <label className="text-sm font-semibold text-gray-700">
-                City
-              </label>
-
-              <input
-                type="text"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="Enter city"
-                className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-[#001F3F]"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-semibold text-gray-700">
-                State
-              </label>
-
-              <input
-                type="text"
-                value={state}
-                onChange={(e) => setState(e.target.value)}
-                placeholder="NY"
-                maxLength={2}
-                className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 uppercase outline-none focus:border-[#001F3F]"
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-semibold text-gray-700">
-                ZIP Code
-              </label>
-
-              <input
-                type="text"
-                value={zipCode}
-                onChange={(e) => setZipCode(e.target.value)}
-                placeholder="Enter ZIP code"
-                maxLength={10}
-                className="mt-2 w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-[#001F3F]"
-              />
-            </div>
-          </div>
-
-          <div className="mt-5 rounded-xl bg-blue-50 p-4">
-            <p className="text-sm text-[#001F3F]">
-              MotorMate can use your general location for nearby mechanics and
-              ToolDrop rentals. Your exact home address does not need to be
-              displayed publicly.
-            </p>
+          <h2 className="flex items-center gap-3 border-b pb-5 text-xl font-bold text-[#001F3F]"><MapPin size={20}/> Location</h2>
+          <p className="mt-3 text-sm text-gray-500">General location appears on ToolDrop listings. Your street address is private.</p>
+          <div className="mt-5 grid gap-5 md:grid-cols-3">
+            <label className="text-sm font-semibold text-gray-700 md:col-span-2">City<input value={city} onChange={e => setCity(e.target.value)} className={field}/></label>
+            <label className="text-sm font-semibold text-gray-700">State<input maxLength={2} value={state} onChange={e => setState(e.target.value.toUpperCase())} className={field}/></label>
+            <label className="text-sm font-semibold text-gray-700">ZIP Code<input maxLength={10} value={zipCode} onChange={e => setZipCode(e.target.value)} className={field}/></label>
           </div>
         </section>
-
-        {/* SAVE BUTTON */}
-
-        <div className="flex justify-end">
-          <button
-            type="submit"
-            disabled={saving}
-            className="flex items-center gap-2 rounded-xl bg-[#001F3F] px-6 py-3 font-semibold text-white transition hover:bg-[#003366] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Save size={18} />
-
-            {saving ? "Saving..." : "Save Changes"}
-          </button>
-        </div>
+        <section className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
+          <h2 className="flex items-center gap-3 border-b pb-5 text-xl font-bold text-[#001F3F]"><Truck size={21}/> ToolDrop Pickup & Drop-off Defaults</h2>
+          <p className="mt-3 text-sm text-gray-600">Used to automatically fill new listings. Each tool can have its own custom instructions in My Tools. Your exact street address is never shown on public ToolDrop pages.</p>
+          <div className="mt-5 space-y-5">
+            <label className="block text-sm font-semibold text-gray-700">Default street address<input value={streetAddress} onChange={e => setStreetAddress(e.target.value)} placeholder="123 Main Street, Apt 2 (optional)" className={field}/></label>
+            <p className="-mt-3 text-xs text-gray-500">Your city, state, and ZIP code are added to the pickup address on new listings.</p>
+            <label className="block text-sm font-semibold text-gray-700">Default pickup instructions<textarea rows={3} maxLength={1200} value={defaultPickupInstructions} onChange={e => setDefaultPickupInstructions(e.target.value)} placeholder="Please text me when you arrive. I'll meet you in the driveway." className={field}/></label>
+            <label className="block text-sm font-semibold text-gray-700">Default drop-off instructions<textarea rows={3} maxLength={1200} value={defaultDropoffInstructions} onChange={e => setDefaultDropoffInstructions(e.target.value)} placeholder="Return the tool clean, with all accessories, and leave it with me." className={field}/></label>
+          </div>
+        </section>
+        <div className="flex justify-end"><button type="submit" disabled={saving} className="flex items-center gap-2 rounded-xl bg-[#001F3F] px-6 py-3 font-semibold text-white disabled:opacity-60"><Save size={18}/>{saving ? "Saving..." : "Save Changes"}</button></div>
       </form>
     </div>
   );

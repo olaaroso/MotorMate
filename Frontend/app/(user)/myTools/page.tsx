@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import {
   ArrowUpRight,
   BarChart3,
@@ -15,6 +16,7 @@ import {
   CheckCircle2,
   Edit3,
   Loader2,
+  MessageCircle,
   Package,
   Plus,
   Save,
@@ -24,9 +26,12 @@ import {
   XCircle,
 } from "lucide-react";
 
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import RentalHandoffControls from "../../../components/RentalHandoffControls";
-import OwnerRentalExtensionControls from "@/components/OwnerRentalExtensionControls";
+import OwnerHandoffEditor from "@/components/OwnerHandoffEditor";
+import OwnerRentalHandoffEditor from "@/components/OwnerRentalHandoffEditor";
+import OwnerRentalExtensionControls from "../../../components/OwnerRentalExtensionControls";
+import RentalConditionReport from "../../../components/RentalConditionReport";
 
 type ToolListing = {
   id: string;
@@ -73,6 +78,16 @@ type RentalRequest = {
     | "return_pending"
     | "completed"
     | "cancelled";
+  pickup_owner_evidence?: { photo_url?: string; notes?: string };
+  pickup_borrower_evidence?: { photo_url?: string; notes?: string };
+  return_borrower_evidence?: { photo_url?: string; notes?: string };
+  return_owner_evidence?: { photo_url?: string; notes?: string };
+  pickup_owner_confirmed_at?: string;
+  pickup_borrower_confirmed_at?: string;
+  return_borrower_submitted_at?: string;
+  return_owner_confirmed_at?: string;
+  handoff_issue_open?: boolean;
+  handoff_issue?: { reason?: string; reported_by?: string };
   created_at?: string;
   extension_request?: { status?: string; original_end_date?: string; requested_end_date?: string };
 };
@@ -107,6 +122,27 @@ function getTodayString() {
   return new Date(now.getTime() - offset)
     .toISOString()
     .split("T")[0];
+}
+
+
+// Synchronize account handoff defaults once per owner visit, and before
+// approval. Failures do NOT block the original rental approval workflow.
+async function syncOwnerHandoffDefaults(ownerId: string, apiUrl: string) {
+  const snapshot = await getDoc(doc(db, "users", ownerId));
+  if (!snapshot.exists()) return;
+  const profile = snapshot.data();
+  const address = [profile.streetAddress, profile.city, profile.state, profile.zipCode]
+    .map((value: unknown) => String(value || "").trim()).filter(Boolean).join(", ");
+  const result = await fetch(`${apiUrl}/api/diy/handoff/defaults/${encodeURIComponent(ownerId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      pickup_address: address,
+      pickup_instructions: profile.defaultPickupInstructions || "",
+      dropoff_instructions: profile.defaultDropoffInstructions || "",
+    }),
+  });
+  if (!result.ok) throw new Error("Could not synchronize owner handoff defaults");
 }
 
 export default function MyToolsPage() {
@@ -146,6 +182,10 @@ export default function MyToolsPage() {
           return;
         }
 
+        // One background sync for legacy listings; never blocks My Tools rendering.
+        void syncOwnerHandoffDefaults(user.uid, apiUrl).catch((err) =>
+          console.warn("ToolDrop defaults sync:", err)
+        );
         try {
           setLoading(true);
           setRentalRequestsLoading(true);
@@ -288,10 +328,13 @@ export default function MyToolsPage() {
       setRequestActionId(request.id);
       setErrorMsg("");
 
+      // Best effort: sync defaults before the original, unchanged approval.
+      // A sync failure must never prevent a valid rental approval.
+      await syncOwnerHandoffDefaults(user.uid, apiUrl).catch((err) =>
+        console.warn("ToolDrop defaults not yet available:", err)
+      );
       const response = await fetch(
-        `${apiUrl}/api/diy/rental-requests/${request.id}/approve?owner_id=${encodeURIComponent(
-          user.uid
-        )}`,
+        `${apiUrl}/api/diy/rental-requests/${request.id}/approve?owner_id=${encodeURIComponent(user.uid)}`,
         {
           method: "PATCH",
         }
@@ -994,6 +1037,9 @@ export default function MyToolsPage() {
                 </p>
               </div>
 
+              <div className="mt-3 inline-flex items-center gap-2"><button type="button" disabled title="Messaging coming soon" className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-500"><MessageCircle size={16} /> Message Renter</button><span className="text-xs text-gray-400">Coming soon</span></div>
+              <RentalConditionReport rental={currentRental} />
+
               {currentRental.status === "approved" && <button
                 type="button"
                 disabled={
@@ -1179,11 +1225,14 @@ export default function MyToolsPage() {
               <div key={r.id} className="rounded-xl border p-4">
                 <p className="font-semibold text-[#001F3F]">{r.tool_name}</p>
                 <p className="mt-1 text-xs text-gray-500">Borrower: {r.renter_name} · {r.start_date} – {r.end_date}</p>
+                <OwnerRentalHandoffEditor rentalId={r.id} listingId={r.listing_id} status={r.status} />
                 <RentalHandoffControls
                   rental={r}
                   role="owner"
                   onUpdated={refreshHandoffData}
                 />
+                <div className="mt-3 inline-flex items-center gap-2"><button type="button" disabled title="Messaging coming soon" className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-500"><MessageCircle size={16} /> Message Renter</button><span className="text-xs text-gray-400">Coming soon</span></div>
+                <RentalConditionReport rental={r} />
               </div>
             ))}
           </div>
@@ -1306,6 +1355,7 @@ export default function MyToolsPage() {
                           {request.end_date}
                         </div>
                       </div>
+                      <div className="mt-3 inline-flex items-center gap-2"><button type="button" disabled title="Messaging coming soon" className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-500"><MessageCircle size={16} /> Message Renter</button><span className="text-xs text-gray-400">Coming soon</span></div>
                     </div>
 
                     <div className="min-w-[180px] rounded-xl bg-gray-50 p-4">
@@ -1464,6 +1514,7 @@ export default function MyToolsPage() {
                               {request.end_date}
                             </div>
                           </div>
+                          <div className="mt-3 inline-flex items-center gap-2"><button type="button" disabled title="Messaging coming soon" className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-500"><MessageCircle size={16} /> Message Renter</button><span className="text-xs text-gray-400">Coming soon</span></div>
                         </div>
 
                         <div className="flex flex-col gap-2">
@@ -1647,6 +1698,37 @@ export default function MyToolsPage() {
             )}
           </section>
         </div>
+      )}
+
+      {/* CONDITION REPORTS: retained per rental, including after a listing is removed */}
+      {!rentalRequestsLoading && rentalRequests.some((request) =>
+        ["completed", "cancelled", "rejected"].includes(request.status)
+      ) && (
+        <section className="mt-10">
+          <h2 className="text-xl font-bold text-[#001F3F]">Past Rental Condition Reports</h2>
+          <p className="mt-1 text-sm text-gray-500">Review photos and notes from past bookings, even after a tool listing is removed.</p>
+          <div className="mt-4 space-y-4">
+            {rentalRequests
+              .filter((request) => ["completed", "cancelled", "rejected"].includes(request.status))
+              .map((request) => (
+                <article key={request.id} className="rounded-2xl border bg-white p-5 shadow-sm">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-bold text-[#001F3F]">{request.tool_name}</h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {request.renter_name} · {request.start_date} – {request.end_date}
+                      </p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs font-semibold ring-1 ${rentalStatusStyles(request.status).className}`}>
+                      {rentalStatusStyles(request.status).label}
+                    </span>
+                  </div>
+                  <div className="mt-3 inline-flex items-center gap-2"><button type="button" disabled title="Messaging coming soon" className="inline-flex cursor-not-allowed items-center gap-2 rounded-xl border border-gray-300 bg-gray-50 px-4 py-2.5 text-sm font-semibold text-gray-500"><MessageCircle size={16} /> Message Renter</button><span className="text-xs text-gray-400">Coming soon</span></div>
+                  <RentalConditionReport rental={request} />
+                </article>
+              ))}
+          </div>
+        </section>
       )}
 
       {/* EDIT MODAL */}
@@ -1904,6 +1986,7 @@ export default function MyToolsPage() {
               </div>
             </div>
 
+            <OwnerHandoffEditor key={editingTool.id} listingId={editingTool.id} />
             <div className="mt-6 flex justify-end gap-3">
               <button
                 type="button"
