@@ -49,7 +49,12 @@ export default function MyRentalsPage(){
 
         <RentalMessages rentalId={r.id} actorId={auth.currentUser?.uid || ""} role="borrower" counterpartName={r.seller_name} rentalStatus={r.status} open={openThreadId === r.id} onToggle={() => setOpenThreadId(prev => prev === r.id ? null : r.id)} />
 
-        <RentalHandoffInstructions rentalId={r.id} status={r.status}/><RentalHandoffControls rental={r} role="borrower" onUpdated={load}/><RentalExtensionControls rental={r} onUpdated={load}/><RentalConditionReport rental={r}/>{eligible(r)&&<div className="mt-4 flex justify-end border-t pt-4"><button onClick={()=>{setError("");setToCancel(r)}} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700"><XCircle size={16}/>{r.status==="pending"?"Cancel Request":"Cancel Reservation"}</button></div>}</div></div></article>};
+        <RentalHandoffInstructions rentalId={r.id} status={r.status}/><RentalHandoffControls rental={r} role="borrower" onUpdated={load}/><RentalExtensionControls rental={r} onUpdated={load}/><RentalConditionReport
+            rental={r}
+            actorId={auth.currentUser?.uid || ""}
+            role="borrower"
+            onUpdate={load}
+        />{eligible(r)&&<div className="mt-4 flex justify-end border-t pt-4"><button onClick={()=>{setError("");setToCancel(r)}} className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700"><XCircle size={16}/>{r.status==="pending"?"Cancel Request":"Cancel Reservation"}</button></div>}</div></div></article>};
 
     const section=(name:string,caption:string,items:Rental[])=><section><div className="mb-5 flex items-end justify-between gap-3"><div><h2 className="text-xl font-bold text-[#001F3F]">{name}</h2><p className="mt-1 text-sm text-gray-500">{caption}</p></div><span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-semibold">{items.length}</span></div>{items.length?<div className="space-y-4">{items.map(card)}</div>:<div className="rounded-2xl border border-dashed bg-white p-8 text-center text-sm text-gray-500">No rentals in this section.</div>}</section>;
     const summaries=[{name:"Pending",count:groups.pending.length,Icon:Clock},{name:"Upcoming",count:groups.upcoming.length,Icon:CalendarDays},{name:"In progress",count:groups.current.length,Icon:Package},{name:"History",count:groups.history.length,Icon:CheckCircle2}];

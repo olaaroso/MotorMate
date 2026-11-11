@@ -126,8 +126,6 @@ function getTodayString() {
 }
 
 
-// Synchronize account handoff defaults once per owner visit, and before
-// approval. Failures do NOT block the original rental approval workflow.
 async function syncOwnerHandoffDefaults(ownerId: string, apiUrl: string) {
   const snapshot = await getDoc(doc(db, "users", ownerId));
   if (!snapshot.exists()) return;
@@ -1049,7 +1047,12 @@ export default function MyToolsPage() {
                       open={openThreadId === currentRental.id}
                       onToggle={() => setOpenThreadId(prev => prev === currentRental.id ? null : currentRental.id)}
                   />
-                  <RentalConditionReport rental={currentRental} />
+                  <RentalConditionReport
+                      rental={currentRental}
+                      actorId={auth.currentUser?.uid || ""}
+                      role="owner"
+                      onUpdate={refreshHandoffData}
+                  />
 
                   {currentRental.status === "approved" && <button
                       type="button"
@@ -1251,7 +1254,12 @@ export default function MyToolsPage() {
                           open={openThreadId === r.id}
                           onToggle={() => setOpenThreadId(prev => prev === r.id ? null : r.id)}
                       />
-                      <RentalConditionReport rental={r} />
+                      <RentalConditionReport
+                          rental={r}
+                          actorId={auth.currentUser?.uid || ""}
+                          role="owner"
+                          onUpdate={refreshHandoffData}
+                      />
                     </div>
                 ))}
               </div>
@@ -1767,7 +1775,12 @@ export default function MyToolsPage() {
                               open={openThreadId === request.id}
                               onToggle={() => setOpenThreadId(prev => prev === request.id ? null : request.id)}
                           />
-                          <RentalConditionReport rental={request} />
+                          <RentalConditionReport
+                              rental={request}
+                              actorId={auth.currentUser?.uid || ""}
+                              role="owner"
+                              onUpdate={refreshHandoffData}
+                          />
                         </article>
                     ))}
               </div>

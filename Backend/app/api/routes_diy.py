@@ -1,6 +1,8 @@
-from datetime import date, datetime, timezone
+import secrets
 
-from typing import List, Optional
+from datetime import date, datetime, timezone, timedelta
+
+from typing import List, Literal, Optional
 
 
 
@@ -13,9 +15,6 @@ from pydantic import BaseModel, Field
 
 
 from app.core.database import db_instance
-
-
-
 
 
 router = APIRouter(
@@ -2813,4 +2812,126 @@ async def reject_rental_request(
                 f"{str(exc)}"
             ),
         )
+
+
+# =========================================================
+# QR HANDOFF PHOTO SESSIONS
+# =========================================================
+
+HandoffStage = Literal[
+    "pickup_owner",
+    "pickup_borrower",
+    "return_borrower",
+    "return_owner",
+]
+
+STAGE_TO_FIELD = {
+    "pickup_owner": ("owner_id", "pickup_owner_evidence"),
+    "pickup_borrower": ("renter_id", "pickup_borrower_evidence"),
+    "return_borrower": ("renter_id", "return_borrower_evidence"),
+    "return_owner": ("owner_id", "return_owner_evidence"),
+}
+
+
+class CreateQRSessionPayload(BaseModel):
+    actor_id: str
+    stage: HandoffStage
+
+
+@router.post("/rental-requests/{request_id}/qr-session")
+async def create_qr_upload_session(request_id: str, payload: CreateQRSessionPayload):
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(400, "Invalid rental ID.")
+
+    rentals = get_rental_requests_collection()
+    rental = await rentals.find_one({"_id": ObjectId(request_id)})
+    if not rental:
+        raise HTTPException(404, "Rental not found.")
+
+    actor_field, _ = STAGE_TO_FIELD[payload.stage]
+    if str(rental.get(actor_field, "")).strip() != payload.actor_id.strip():
+        raise HTTPException(403, "Not authorized for this handoff photo slot.")
+
+    token = secrets.token_urlsafe(24)
+    now = datetime.now(timezone.utc)
+    expires_at = (now + timedelta(minutes=10)).isoformat()
+
+    session_doc = {
+        "token": token,
+        "rental_id": request_id,
+        "actor_id": payload.actor_id.strip(),
+        "stage": payload.stage,
+        "tool_name": rental.get("tool_name", "Tool"),
+        "status": "pending",  # "pending" | "completed"
+        "photo_url": None,
+        "notes": None,
+        "created_at": now.isoformat(),
+        "expires_at": expires_at,
+    }
+    await db_instance.db["handoff_upload_sessions"].insert_one(session_doc)
+    return {"token": token, "expires_at": expires_at}
+
+
+@router.get("/qr-session/{token}")
+async def get_qr_upload_session(token: str):
+    session = await db_instance.db["handoff_upload_sessions"].find_one({"token": token})
+    if not session:
+        raise HTTPException(404, "Upload session not found.")
+
+    if datetime.now(timezone.utc).isoformat() > session["expires_at"] and session["status"] != "completed":
+        raise HTTPException(410, "This QR code has expired. Generate a new one on your computer.")
+
+    return {
+        "rental_id": session["rental_id"],
+        "stage": session["stage"],
+        "tool_name": session["tool_name"],
+        "status": session["status"],
+        "photo_url": session.get("photo_url"),
+        "notes": session.get("notes"),
+    }
+
+
+class QRCompletePayload(BaseModel):
+    photo_url: str
+    condition_notes: Optional[str] = None
+
+
+@router.post("/qr-session/{token}/complete")
+async def complete_qr_upload_session(token: str, payload: QRCompletePayload):
+    sessions = db_instance.db["handoff_upload_sessions"]
+    session = await sessions.find_one({"token": token})
+    if not session:
+        raise HTTPException(404, "Upload session not found.")
+    if session["status"] == "completed":
+        raise HTTPException(409, "A photo has already been submitted for this QR session.")
+    if datetime.now(timezone.utc).isoformat() > session["expires_at"]:
+        raise HTTPException(410, "This QR code has expired.")
+
+    photo = (payload.photo_url or "").strip()
+    notes = (payload.condition_notes or "").strip()
+    if not (photo.startswith("https://") or photo.startswith("data:image/")):
+        raise HTTPException(400, "Valid photo is required.")
+    if len(notes) > 1000:
+        raise HTTPException(400, "Notes are too long.")
+
+    evidence = {"photo_url": photo, "notes": notes}
+    _, evidence_field = STAGE_TO_FIELD[session["stage"]]
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    await get_rental_requests_collection().update_one(
+        {"_id": ObjectId(session["rental_id"])},
+        {"$set": {evidence_field: evidence, f"{evidence_field}_at": now_iso}},
+    )
+
+    await sessions.update_one(
+        {"token": token},
+        {
+            "$set": {
+                "status": "completed",
+                "photo_url": evidence["photo_url"],
+                "notes": evidence["notes"],
+            }
+        },
+    )
+    return {"message": "Condition photo uploaded successfully!", "evidence": evidence}
 
