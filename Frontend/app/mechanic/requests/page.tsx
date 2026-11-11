@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import {
+  Ban,
   CalendarDays,
   Car,
   CheckCircle2,
@@ -26,6 +27,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import CancelServiceRequestDialog from "@/components/CancelServiceRequestDialog";
 import ServiceRequestMessages from "@/components/ServiceRequestMessages";
 import StatCard from "@/components/StatCard";
 import { auth } from "@/lib/firebase";
@@ -40,7 +42,7 @@ import {
 const apiUrl =
   process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-type RequestStatus = "pending" | "accepted" | "declined" | "completed";
+type RequestStatus = "pending" | "accepted" | "declined" | "completed" | "cancelled";
 type RequestFilter = "all" | RequestStatus;
 
 type VehicleSummary = {
@@ -74,6 +76,9 @@ type ServiceRequest = {
   completed_mileage?: number;
   completed_cost?: number;
   completion_notes?: string;
+  cancelled_by?: "customer" | "mechanic";
+  cancelled_at?: string;
+  cancel_reason?: string;
 };
 
 type RequestsResponse = {
@@ -118,6 +123,7 @@ const FILTERS: Array<{ value: RequestFilter; label: string }> = [
   { value: "accepted", label: "Accepted" },
   { value: "declined", label: "Declined" },
   { value: "completed", label: "Completed" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 async function fetchMechanicRequests(
@@ -185,7 +191,26 @@ function mileageLabel(summary?: VehicleSummary) {
     : "Mileage not listed";
 }
 
+function describeCancellation(request: ServiceRequest) {
+  const who = request.cancelled_by === "mechanic" ? "You cancelled" : "The customer cancelled";
+  const when = request.cancelled_at
+    ? ` on ${new Date(request.cancelled_at).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+      })}`
+    : "";
+  return `${who} this request${when}.`;
+}
+
 function statusStyles(status: RequestStatus) {
+  if (status === "cancelled") {
+    return {
+      label: "Cancelled",
+      className: "bg-slate-100 text-slate-600 ring-slate-200",
+      icon: Ban,
+    };
+  }
+
   if (status === "completed") {
     return {
       label: "Completed",
@@ -257,6 +282,7 @@ function MechanicRequestsContent() {
   const [completionNotes, setCompletionNotes] = useState("");
   const [completionError, setCompletionError] = useState("");
   const [removingRequestId, setRemovingRequestId] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<ServiceRequest | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -318,6 +344,7 @@ function MechanicRequestsContent() {
       accepted: requests.filter((request) => request.status === "accepted").length,
       declined: requests.filter((request) => request.status === "declined").length,
       completed: requests.filter((request) => request.status === "completed").length,
+      cancelled: requests.filter((request) => request.status === "cancelled").length,
     }),
     [requests]
   );
@@ -328,6 +355,7 @@ function MechanicRequestsContent() {
       accepted: 1,
       declined: 2,
       completed: 3,
+      cancelled: 4,
     };
 
     const filtered =
@@ -725,6 +753,11 @@ function MechanicRequestsContent() {
                   }
                   onComplete={() => openCompletion(request)}
                   onRemove={() => void removeCompletedRequest(request)}
+                  onCancel={() => {
+                    setError("");
+                    setNotice("");
+                    setCancelTarget(request);
+                  }}
                   messagesOpen={openThreadId === request.id}
                   unreadMessageCount={
                     openThreadId === request.id ? 0 : unreadCounts[request.id] ?? 0
@@ -740,6 +773,27 @@ function MechanicRequestsContent() {
           )}
         </div>
       </section>
+
+      {cancelTarget && (
+        <CancelServiceRequestDialog<ServiceRequest>
+          requestId={cancelTarget.id}
+          actorId={mechanicId}
+          view="mechanic"
+          isAppointment
+          summary={`${cancelTarget.service_requested} · ${formatDate(
+            cancelTarget.appointment_date
+          )} at ${formatTime(cancelTarget.appointment_start_time)}`}
+          otherPartyName={cancelTarget.customer_name || "The customer"}
+          onClose={() => setCancelTarget(null)}
+          onCancelled={(cancelled) => {
+            setRequests((previous) =>
+              previous.map((item) => (item.id === cancelled.id ? cancelled : item))
+            );
+            setCancelTarget(null);
+            setNotice("Appointment cancelled. That time is available for new requests again.");
+          }}
+        />
+      )}
 
       {completionRequest && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
@@ -888,6 +942,7 @@ function RequestCard({
   onDecline,
   onComplete,
   onRemove,
+  onCancel,
   messagesOpen,
   unreadMessageCount,
   onToggleMessages,
@@ -901,6 +956,7 @@ function RequestCard({
   onDecline: () => void;
   onComplete: () => void;
   onRemove: () => void;
+  onCancel: () => void;
   messagesOpen: boolean;
   unreadMessageCount: number;
   onToggleMessages: () => void;
@@ -1018,6 +1074,15 @@ function RequestCard({
             </p>
           )}
 
+          {request.status === "cancelled" && (
+            <p className="mt-3 text-sm text-slate-500">
+              <span className="font-semibold text-slate-700">
+                {describeCancellation(request)}
+              </span>
+              {request.cancel_reason ? ` Reason: ${request.cancel_reason}` : ""}
+            </p>
+          )}
+
           <ServiceRequestMessages
             requestId={request.id}
             actorId={mechanicId}
@@ -1063,7 +1128,7 @@ function RequestCard({
         )}
 
         {request.status === "accepted" && (
-          <div className="flex shrink-0 xl:flex-col">
+          <div className="flex shrink-0 flex-row gap-2 xl:flex-col">
             <button
               type="button"
               onClick={onComplete}
@@ -1072,6 +1137,15 @@ function RequestCard({
             >
               <ClipboardCheck size={15} />
               Mark Completed
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={actionsDisabled}
+              className="inline-flex min-w-36 items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-2.5 text-sm font-semibold text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Ban size={15} />
+              Cancel Appointment
             </button>
           </div>
         )}
@@ -1119,11 +1193,11 @@ function SharedHistorySection({
     );
   }
 
-  if (request.status === "declined") {
+  if (request.status === "declined" || request.status === "cancelled") {
     return (
       <p className="mt-4 flex items-center gap-2 text-sm text-slate-500">
         <History size={15} className="text-slate-400" />
-        Shared service history is not available for declined requests.
+        Shared service history is not available for {request.status} requests.
       </p>
     );
   }
@@ -1263,6 +1337,10 @@ function EmptyState({ filter }: { filter: RequestFilter }) {
     completed: {
       title: "No completed services",
       body: "Finished appointments will appear here after you mark them completed.",
+    },
+    cancelled: {
+      title: "No cancelled appointments",
+      body: "Appointments cancelled by you or the customer will appear here for reference.",
     },
   };
 

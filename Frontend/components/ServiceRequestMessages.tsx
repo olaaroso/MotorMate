@@ -83,6 +83,7 @@ export default function ServiceRequestMessages({
 function readOnlyMessage(status: string) {
   if (status === "declined") return "This request was declined. Messaging is now read-only.";
   if (status === "completed") return "This service is completed. Messaging is now read-only.";
+  if (status === "cancelled") return "This appointment was cancelled. Messaging is now read-only.";
   return "Messaging is read-only for this request.";
 }
 

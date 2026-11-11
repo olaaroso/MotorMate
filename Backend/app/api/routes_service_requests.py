@@ -8,6 +8,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.database import db_instance
 from app.models.appointment import (
+    ServiceRequestCancel,
     ServiceRequestCreate,
     ServiceRequestStatus,
     ServiceRequestStatusUpdate,
@@ -33,6 +34,12 @@ router = APIRouter(
 
 OTHER_SERVICE = "Other / Not sure"
 RESERVED_STATUSES = {"accepted", "completed"}
+# Mechanics decline pending requests rather than cancelling them.
+CANCELLABLE_STATUSES = {
+    "customer": {"pending", "accepted"},
+    "mechanic": {"accepted"},
+}
+PARTICIPANT_FIELDS = {"mechanic": "mechanic_id", "customer": "customer_id"}
 _indexes_ready = False
 
 
@@ -148,6 +155,33 @@ async def notify_customer_of_status(request_document: dict):
         message,
         destination=CUSTOMER_APPOINTMENTS_PAGE,
     )
+
+
+async def notify_other_party_of_cancellation(request_document: dict, previous_status: str):
+    """Tell the participant who didn't cancel; the reason is shared like a decline reason."""
+    service = request_document.get("service_requested") or "service"
+    when = describe_appointment(request_document)
+    request_id = str(request_document["_id"])
+    reason = str(request_document.get("cancel_reason") or "").strip()
+
+    if request_document.get("cancelled_by") == "customer":
+        customer = request_document.get("customer_name") or "A customer"
+        kind = "appointment" if previous_status == "accepted" else "request"
+        user_id = request_document.get("mechanic_id")
+        title = "Appointment Cancelled"
+        message = f"{customer} cancelled their {service} {kind} for {when}."
+        destination = f"{MECHANIC_REQUESTS_PAGE}?request={request_id}"
+    else:
+        shop = request_document.get("shop_name") or "MotorMate Mechanic"
+        user_id = request_document.get("customer_id")
+        title = f"Appointment Cancelled by {shop}"
+        message = f"{shop} cancelled your {service} appointment on {when}."
+        destination = f"{CUSTOMER_APPOINTMENTS_PAGE}?request={request_id}"
+
+    if reason:
+        message = f"{message} Reason: {reason}"
+
+    await create_notification(user_id, title, message, destination=destination)
 
 
 def format_clock(minutes: int) -> str:
@@ -1021,6 +1055,76 @@ async def update_service_request_status(
     return {
         "message": "Service request accepted.",
         "request": serialize_for_mechanic(updated),
+    }
+
+
+@router.patch("/{request_id}/cancel")
+async def cancel_service_request(request_id: str, payload: ServiceRequestCancel):
+    """
+    Lets a participant call off a request without deleting it:
+
+    customer: pending | accepted -> cancelled
+    mechanic: accepted -> cancelled (pending requests are declined instead)
+
+    Cancelled requests are not in RESERVED_STATUSES, so an accepted
+    appointment's time becomes bookable again.
+
+    Security limitation: actor_id is client-asserted, as with the other
+    service-request routes.
+    """
+    if not ObjectId.is_valid(request_id):
+        raise HTTPException(status_code=400, detail="Invalid service request ID.")
+
+    actor_id = payload.actor_id.strip()
+    if not actor_id:
+        raise HTTPException(status_code=400, detail="actor_id is required.")
+
+    view = payload.view
+    owner_filter = {"_id": ObjectId(request_id), PARTICIPANT_FIELDS[view]: actor_id}
+    requests = get_collection("service_requests")
+
+    request_document = await requests.find_one(owner_filter)
+    if not request_document:
+        raise HTTPException(status_code=404, detail="Service request not found.")
+
+    current_status = request_document.get("status", "pending")
+    if current_status not in CANCELLABLE_STATUSES[view]:
+        if view == "mechanic" and current_status == "pending":
+            detail = "Pending requests can't be cancelled. Decline the request instead."
+        else:
+            detail = f"This request can't be cancelled because it is already {current_status}."
+        raise HTTPException(status_code=409, detail=detail)
+
+    update = {
+        "status": "cancelled",
+        "cancelled_by": view,
+        "cancelled_at": datetime.now(timezone.utc).isoformat(),
+    }
+    reason = str(payload.reason or "").strip()
+    if reason:
+        update["cancel_reason"] = reason
+
+    # Matching the status we checked means an accept/decline/complete that
+    # landed in between makes this a no-op instead of overwriting it.
+    updated = await requests.find_one_and_update(
+        {**owner_filter, "status": request_document.get("status")},
+        {"$set": update},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not updated:
+        raise HTTPException(
+            status_code=409,
+            detail="This request changed before it could be cancelled. Refresh and try again.",
+        )
+
+    await notify_other_party_of_cancellation(updated, current_status)
+
+    serialize = serialize_for_mechanic if view == "mechanic" else serialize_mongo_document
+    return {
+        "message": (
+            "Appointment cancelled." if current_status == "accepted" else "Request cancelled."
+        ),
+        "request": serialize(updated),
     }
 
 
