@@ -75,12 +75,12 @@ export default function RentalConditionReport({ rental, defaultOpen = false }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const before: Stage[] = [
-    { title: "Owner · at pickup", evidence: rental.pickup_owner_evidence, submittedAt: rental.pickup_owner_confirmed_at },
-    { title: "Borrower · on receipt", evidence: rental.pickup_borrower_evidence, submittedAt: rental.pickup_borrower_confirmed_at },
+    { title: "Owner's pickup photo", evidence: rental.pickup_owner_evidence, submittedAt: rental.pickup_owner_confirmed_at },
+    { title: "Borrower's pickup photo", evidence: rental.pickup_borrower_evidence, submittedAt: rental.pickup_borrower_confirmed_at },
   ];
   const after: Stage[] = [
-    { title: "Borrower · at return", evidence: rental.return_borrower_evidence, submittedAt: rental.return_borrower_submitted_at },
-    { title: "Owner · after inspection", evidence: rental.return_owner_evidence, submittedAt: rental.return_owner_confirmed_at },
+    { title: "Borrower's return photo", evidence: rental.return_borrower_evidence, submittedAt: rental.return_borrower_submitted_at },
+    { title: "Owner's return inspection", evidence: rental.return_owner_evidence, submittedAt: rental.return_owner_confirmed_at },
   ];
   return (
     <section className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -106,16 +106,16 @@ export default function RentalConditionReport({ rental, defaultOpen = false }: {
           )}
           <div className="grid gap-4 lg:grid-cols-2">
             <div>
-              <h3 className="mb-2 text-sm font-bold text-emerald-800">Before · Pickup</h3>
+              <h3 className="mb-2 text-sm font-bold text-emerald-800">Rental Pickup Condition</h3>
               <div className="space-y-3">{before.map(stage => <EvidenceStage key={stage.title} stage={stage} />)}</div>
             </div>
             <div>
-              <h3 className="mb-2 text-sm font-bold text-blue-800">After · Return</h3>
+              <h3 className="mb-2 text-sm font-bold text-blue-800">Rental Return Condition</h3>
               <div className="space-y-3">{after.map(stage => <EvidenceStage key={stage.title} stage={stage} />)}</div>
             </div>
           </div>
           <p className="mt-4 text-xs text-slate-500">
-            Photos can support a condition dispute but do not automatically establish responsibility or authorize a charge.
+            Photos can support a condition dispute but does not automatically establish responsibility or authorize a charge.
           </p>
         </div>
       )}

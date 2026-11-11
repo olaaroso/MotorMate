@@ -17,6 +17,7 @@ from app.api import (
     routes_service_request_messages,
     routes_service_requests,
     routes_vin,
+    routes_rental_messages,
 )
 from app.core.database import close_mongo_connection, connect_to_mongo
 
@@ -76,13 +77,13 @@ app.include_router(routes_diy.router)
 app.include_router(routes_rental_extensions.router)
 app.include_router(routes_tool_handoff.router)
 app.include_router(routes_service_history.router)
-app.include_router(
-    routes_notifications.router,
+app.include_router(routes_notifications.router,
     prefix="/api/notifications",
     tags=["Notifications"],
 )
 app.include_router(routes_service_requests.router)
 app.include_router(routes_service_request_messages.router)
+app.include_router(routes_rental_messages.router)
 
 
 @app.get("/")

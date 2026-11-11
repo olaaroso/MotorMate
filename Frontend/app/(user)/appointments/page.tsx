@@ -566,6 +566,7 @@ function AppointmentsContent() {
                       current === request.id ? null : request.id
                     )
                   }
+                  onReadMessages={refreshUnreadCounts}
                 />
               ))}
             </div>
@@ -611,6 +612,7 @@ function AppointmentCard({
   messagesOpen,
   unreadMessageCount,
   onToggleMessages,
+  onReadMessages,
 }: {
   request: ServiceRequest;
   customerId: string;
@@ -621,6 +623,7 @@ function AppointmentCard({
   messagesOpen: boolean;
   unreadMessageCount: number;
   onToggleMessages: () => void;
+  onReadMessages: () => void;
 }) {
   const status = statusStyles(request.status);
   const StatusIcon = status.icon;
@@ -753,6 +756,7 @@ function AppointmentCard({
             open={messagesOpen}
             onToggle={onToggleMessages}
             unreadCount={unreadMessageCount}
+            onRead={onReadMessages}
           />
         </div>
 
