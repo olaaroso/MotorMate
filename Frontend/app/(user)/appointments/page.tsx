@@ -28,6 +28,7 @@ import ServiceRequestMessages from "@/components/ServiceRequestMessages";
 import StatCard from "@/components/StatCard";
 import { auth } from "@/lib/firebase";
 import { isServiceRequestId } from "@/lib/messages";
+import { useUnreadMessageCounts } from "@/lib/useUnreadMessageCounts";
 import {
   describeEstimate,
   hasEstimateValues,
@@ -205,6 +206,7 @@ function AppointmentsContent() {
   const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [customerId, setCustomerId] = useState("");
+  const { unreadCounts, refreshUnreadCounts } = useUnreadMessageCounts(customerId, "customer");
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [activeFilter, setActiveFilter] = useState<RequestFilter>("all");
   const [loading, setLoading] = useState(true);
@@ -334,6 +336,7 @@ function AppointmentsContent() {
       setRefreshing(true);
       setError("");
       setNotice("");
+      refreshUnreadCounts();
       setRequests(await fetchCustomerRequests(customerId));
     } catch (refreshError) {
       setError(
@@ -518,6 +521,9 @@ function AppointmentsContent() {
                   removeDisabled={Boolean(removingRequestId)}
                   onRemove={() => void removeCompletedRequest(request)}
                   messagesOpen={openThreadId === request.id}
+                  unreadMessageCount={
+                    openThreadId === request.id ? 0 : unreadCounts[request.id] ?? 0
+                  }
                   onToggleMessages={() =>
                     setOpenThreadId((current) =>
                       current === request.id ? null : request.id
@@ -540,6 +546,7 @@ function AppointmentCard({
   removeDisabled,
   onRemove,
   messagesOpen,
+  unreadMessageCount,
   onToggleMessages,
 }: {
   request: ServiceRequest;
@@ -548,6 +555,7 @@ function AppointmentCard({
   removeDisabled: boolean;
   onRemove: () => void;
   messagesOpen: boolean;
+  unreadMessageCount: number;
   onToggleMessages: () => void;
 }) {
   const status = statusStyles(request.status);
@@ -677,6 +685,7 @@ function AppointmentCard({
             requestStatus={request.status}
             open={messagesOpen}
             onToggle={onToggleMessages}
+            unreadCount={unreadMessageCount}
           />
         </div>
 

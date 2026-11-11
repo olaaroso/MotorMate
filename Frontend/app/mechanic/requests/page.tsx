@@ -30,6 +30,7 @@ import ServiceRequestMessages from "@/components/ServiceRequestMessages";
 import StatCard from "@/components/StatCard";
 import { auth } from "@/lib/firebase";
 import { isServiceRequestId } from "@/lib/messages";
+import { useUnreadMessageCounts } from "@/lib/useUnreadMessageCounts";
 import {
   describeEstimate,
   hasEstimateValues,
@@ -241,6 +242,7 @@ function MechanicRequestsContent() {
   const [scrollTargetId, setScrollTargetId] = useState<string | null>(null);
   const [openThreadId, setOpenThreadId] = useState<string | null>(null);
   const [mechanicId, setMechanicId] = useState("");
+  const { unreadCounts, refreshUnreadCounts } = useUnreadMessageCounts(mechanicId, "mechanic");
   const [requests, setRequests] = useState<ServiceRequest[]>([]);
   const [activeFilter, setActiveFilter] = useState<RequestFilter>("all");
   const [loading, setLoading] = useState(true);
@@ -383,6 +385,7 @@ function MechanicRequestsContent() {
       setRefreshing(true);
       setError("");
       setNotice("");
+      refreshUnreadCounts();
 
       const nextRequests = await fetchMechanicRequests(mechanicId);
       setRequests(nextRequests);
@@ -723,6 +726,9 @@ function MechanicRequestsContent() {
                   onComplete={() => openCompletion(request)}
                   onRemove={() => void removeCompletedRequest(request)}
                   messagesOpen={openThreadId === request.id}
+                  unreadMessageCount={
+                    openThreadId === request.id ? 0 : unreadCounts[request.id] ?? 0
+                  }
                   onToggleMessages={() =>
                     setOpenThreadId((current) =>
                       current === request.id ? null : request.id
@@ -883,6 +889,7 @@ function RequestCard({
   onComplete,
   onRemove,
   messagesOpen,
+  unreadMessageCount,
   onToggleMessages,
 }: {
   request: ServiceRequest;
@@ -895,6 +902,7 @@ function RequestCard({
   onComplete: () => void;
   onRemove: () => void;
   messagesOpen: boolean;
+  unreadMessageCount: number;
   onToggleMessages: () => void;
 }) {
   const status = statusStyles(request.status);
@@ -1018,6 +1026,7 @@ function RequestCard({
             requestStatus={request.status}
             open={messagesOpen}
             onToggle={onToggleMessages}
+            unreadCount={unreadMessageCount}
           />
         </div>
 

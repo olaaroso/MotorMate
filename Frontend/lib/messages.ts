@@ -16,6 +16,12 @@ export type RequestThread = {
   messages: RequestMessage[];
 };
 
+export type MessageSummaryItem = {
+  unread_count: number;
+  last_message_at: string | null;
+  last_message_sender_role: MessagingView | null;
+};
+
 export const MAX_MESSAGE_LENGTH = 1000;
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
@@ -48,6 +54,15 @@ async function request<T>(url: string, init: RequestInit | undefined, failure: s
   }
 
   return data as T;
+}
+
+export async function fetchMessageSummary(actorId: string, view: MessagingView) {
+  const data = await request<{ results?: Record<string, MessageSummaryItem> }>(
+    `${API_URL}/api/service-requests/messages/summary?${actorQuery(actorId, view)}`,
+    undefined,
+    "Failed to load message summary."
+  );
+  return data.results ?? {};
 }
 
 export function fetchRequestThread(requestId: string, actorId: string, view: MessagingView) {
