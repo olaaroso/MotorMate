@@ -24,6 +24,7 @@ type ServiceRequestMessagesProps = {
   requestStatus: string;
   open: boolean;
   onToggle: () => void;
+  unreadCount?: number;
 };
 
 export default function ServiceRequestMessages({
@@ -34,18 +35,31 @@ export default function ServiceRequestMessages({
   requestStatus,
   open,
   onToggle,
+  unreadCount = 0,
 }: ServiceRequestMessagesProps) {
+  const unreadLabel = `${unreadCount} new`;
+
   return (
     <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
           <MessageSquare size={15} className="text-blue-600" />
           Messages with {counterpartName}
+          {unreadCount > 0 && (
+            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
+              {unreadLabel}
+            </span>
+          )}
         </p>
         <button
           type="button"
           onClick={onToggle}
           aria-expanded={open}
+          aria-label={
+            unreadCount > 0 && !open
+              ? `Open messages with ${counterpartName}, ${unreadLabel}`
+              : undefined
+          }
           className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50"
         >
           {open ? "Hide messages" : "Open messages"}
@@ -69,6 +83,7 @@ export default function ServiceRequestMessages({
 function readOnlyMessage(status: string) {
   if (status === "declined") return "This request was declined. Messaging is now read-only.";
   if (status === "completed") return "This service is completed. Messaging is now read-only.";
+  if (status === "cancelled") return "This appointment was cancelled. Messaging is now read-only.";
   return "Messaging is read-only for this request.";
 }
 
@@ -195,6 +210,7 @@ function MessageThread({
           : previous
       );
       setDraft("");
+      announceNotificationsUpdated();
     } catch (error) {
       if (!mounted.current) return;
       setSendError(errorMessage(error, "Failed to send message."));

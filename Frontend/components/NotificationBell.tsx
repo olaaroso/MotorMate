@@ -16,6 +16,9 @@ import {
     getNotificationDestination,
     markNotificationRead,
 } from "@/lib/notifications";
+import { useVisibleInterval } from "@/lib/useVisibleInterval";
+
+const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
 
 type NotificationBellProps = {
     notificationsHref?: string;
@@ -33,42 +36,75 @@ export default function NotificationBell({
         (notification) => !notification.is_read
     ).length;
 
-    const fetchNotifications = useCallback(async (uid: string) => {
-        try {
-            setNotifications(await requestNotifications(uid));
-        } catch (error) {
-            console.error("Failed to fetch notifications:", error);
+    const fetchInFlight = useRef(false);
+    const fetchQueued = useRef(false);
+    const failureLogged = useRef(false);
+
+    // Background refreshes (poll, focus) are dropped while one is in flight;
+    // forced ones (sign-in, notification changes, opening the bell) run once
+    // more afterwards so they never show a list fetched before the change.
+    const refreshNotifications = useCallback((force = false) => {
+        if (!auth.currentUser) return;
+        if (fetchInFlight.current) {
+            if (force) fetchQueued.current = true;
+            return;
         }
+
+        const run = () => {
+            const uid = auth.currentUser?.uid;
+            if (!uid) return;
+
+            fetchInFlight.current = true;
+            requestNotifications(uid)
+                .then((next) => {
+                    failureLogged.current = false;
+                    if (auth.currentUser?.uid === uid) setNotifications(next);
+                })
+                .catch((error) => {
+                    // Log once per outage instead of on every poll.
+                    if (!failureLogged.current) {
+                        failureLogged.current = true;
+                        console.error("Failed to fetch notifications:", error);
+                    }
+                })
+                .finally(() => {
+                    fetchInFlight.current = false;
+                    if (fetchQueued.current) {
+                        fetchQueued.current = false;
+                        run();
+                    }
+                });
+        };
+
+        run();
     }, []);
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             if (user) {
-                void fetchNotifications(user.uid);
+                refreshNotifications(true);
             } else {
                 setNotifications([]);
             }
         });
 
         return () => unsubscribe();
-    }, [fetchNotifications]);
+    }, [refreshNotifications]);
 
     useEffect(() => {
-        const refresh = () => {
-            const uid = auth.currentUser?.uid;
-            if (uid) {
-                void fetchNotifications(uid);
-            }
-        };
+        const refreshAfterChange = () => refreshNotifications(true);
+        const refreshInBackground = () => refreshNotifications();
 
-        window.addEventListener(NOTIFICATIONS_UPDATED_EVENT, refresh);
-        window.addEventListener("focus", refresh);
+        window.addEventListener(NOTIFICATIONS_UPDATED_EVENT, refreshAfterChange);
+        window.addEventListener("focus", refreshInBackground);
 
         return () => {
-            window.removeEventListener(NOTIFICATIONS_UPDATED_EVENT, refresh);
-            window.removeEventListener("focus", refresh);
+            window.removeEventListener(NOTIFICATIONS_UPDATED_EVENT, refreshAfterChange);
+            window.removeEventListener("focus", refreshInBackground);
         };
-    }, [fetchNotifications]);
+    }, [refreshNotifications]);
+
+    useVisibleInterval(refreshNotifications, NOTIFICATION_POLL_INTERVAL_MS);
 
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
@@ -136,8 +172,8 @@ export default function NotificationBell({
         <div className="relative" ref={dropdownRef}>
             <button
                 onClick={() => {
-                    if (!isOpen && auth.currentUser) {
-                        void fetchNotifications(auth.currentUser.uid);
+                    if (!isOpen) {
+                        refreshNotifications(true);
                     }
                     setIsOpen(!isOpen);
                 }}

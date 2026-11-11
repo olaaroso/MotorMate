@@ -8,7 +8,10 @@ ServiceRequestStatus = Literal[
     "accepted",
     "declined",
     "completed",
+    "cancelled",
 ]
+
+MAX_CANCEL_REASON_LENGTH = 500
 
 
 class ServiceRequestCreate(BaseModel):
@@ -38,6 +41,17 @@ class ServiceRequestCreate(BaseModel):
             "while the request is pending, accepted, or completed."
         ),
     )
+
+
+class ServiceRequestCancel(BaseModel):
+    """
+    A participant calling off a request. Who cancelled is derived from which
+    side of the request actor_id matches, never supplied by the client.
+    """
+
+    actor_id: str = Field(..., min_length=1)
+    view: Literal["mechanic", "customer"]
+    reason: Optional[str] = Field(default=None, max_length=MAX_CANCEL_REASON_LENGTH)
 
 
 class ServiceRequestStatusUpdate(BaseModel):
