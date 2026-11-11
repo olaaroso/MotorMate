@@ -25,58 +25,64 @@ type ServiceRequestMessagesProps = {
   open: boolean;
   onToggle: () => void;
   unreadCount?: number;
+  onRead?: () => void;
 };
 
 export default function ServiceRequestMessages({
-  requestId,
-  actorId,
-  view,
-  counterpartName,
-  requestStatus,
-  open,
-  onToggle,
-  unreadCount = 0,
-}: ServiceRequestMessagesProps) {
-  const unreadLabel = `${unreadCount} new`;
+                                                 requestId,
+                                                 actorId,
+                                                 view,
+                                                 counterpartName,
+                                                 requestStatus,
+                                                 open,
+                                                 onToggle,
+                                                 unreadCount = 0,
+                                                 onRead,
+                                               }: ServiceRequestMessagesProps) {
+  const hasUnread = unreadCount > 0 && !open;
+  const headerText = hasUnread
+      ? `${unreadCount} unread ${unreadCount === 1 ? "message" : "messages"} from ${counterpartName}`
+      : `Messages with ${counterpartName}`;
 
   return (
-    <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-          <MessageSquare size={15} className="text-blue-600" />
-          Messages with {counterpartName}
-          {unreadCount > 0 && (
-            <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
-              {unreadLabel}
+      <div className="mt-4 rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p
+              className={`flex items-center gap-2 text-sm font-semibold ${
+                  hasUnread ? "text-blue-700" : "text-slate-700"
+              }`}
+          >
+            <MessageSquare size={15} className="text-blue-600" />
+            {headerText}
+            {hasUnread && (
+                <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
+              {unreadCount} new
             </span>
-          )}
-        </p>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          aria-label={
-            unreadCount > 0 && !open
-              ? `Open messages with ${counterpartName}, ${unreadLabel}`
-              : undefined
-          }
-          className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50"
-        >
-          {open ? "Hide messages" : "Open messages"}
-        </button>
-      </div>
+            )}
+          </p>
+          <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={open}
+              aria-label={hasUnread ? `Open ${headerText}` : undefined}
+              className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-50"
+          >
+            {open ? "Hide messages" : "Open messages"}
+          </button>
+        </div>
 
-      {open && actorId && (
-        <MessageThread
-          key={requestId}
-          requestId={requestId}
-          actorId={actorId}
-          view={view}
-          counterpartName={counterpartName}
-          requestStatus={requestStatus}
-        />
-      )}
-    </div>
+        {open && actorId && (
+            <MessageThread
+                key={requestId}
+                requestId={requestId}
+                actorId={actorId}
+                view={view}
+                counterpartName={counterpartName}
+                requestStatus={requestStatus}
+                onRead={onRead}
+            />
+        )}
+      </div>
   );
 }
 
@@ -104,12 +110,13 @@ function errorMessage(error: unknown, fallback: string) {
 }
 
 function MessageThread({
-  requestId,
-  actorId,
-  view,
-  counterpartName,
-  requestStatus,
-}: Omit<ServiceRequestMessagesProps, "open" | "onToggle">) {
+                         requestId,
+                         actorId,
+                         view,
+                         counterpartName,
+                         requestStatus,
+                         onRead,
+                       }: Omit<ServiceRequestMessagesProps, "open" | "onToggle" | "unreadCount">) {
   const [thread, setThread] = useState<RequestThread | null>(null);
   const [loadError, setLoadError] = useState("");
   const [draft, setDraft] = useState("");
@@ -117,37 +124,38 @@ function MessageThread({
   const [sendError, setSendError] = useState("");
   const mounted = useRef(false);
   const loadInFlight = useRef(false);
-  // Bumped on every successful send so a poll that started earlier can't
-  // replace the thread with a list that's missing the new message.
   const sendVersion = useRef(0);
   const lastRequestStatus = useRef(requestStatus);
   const listRef = useRef<HTMLDivElement>(null);
+  const onReadRef = useRef(onRead);
+  onReadRef.current = onRead;
 
   const loadThread = useCallback(
-    (markAsRead: boolean) => {
-      if (loadInFlight.current) return;
-      loadInFlight.current = true;
-      const version = sendVersion.current;
+      (markAsRead: boolean) => {
+        if (loadInFlight.current) return;
+        loadInFlight.current = true;
+        const version = sendVersion.current;
 
-      fetchRequestThread(requestId, actorId, view)
-        .then(async (next) => {
-          if (!mounted.current) return;
-          if (version === sendVersion.current) setThread(next);
-          setLoadError("");
+        fetchRequestThread(requestId, actorId, view)
+            .then(async (next) => {
+              if (!mounted.current) return;
+              if (version === sendVersion.current) setThread(next);
+              setLoadError("");
 
-          if (markAsRead || next.unread_count > 0) {
-            await markRequestThreadRead(requestId, actorId, view);
-            announceNotificationsUpdated();
-          }
-        })
-        .catch((error) => {
-          if (mounted.current) setLoadError(errorMessage(error, "Failed to load messages."));
-        })
-        .finally(() => {
-          loadInFlight.current = false;
-        });
-    },
-    [requestId, actorId, view]
+              if (markAsRead || next.unread_count > 0) {
+                await markRequestThreadRead(requestId, actorId, view);
+                onReadRef.current?.();
+                announceNotificationsUpdated();
+              }
+            })
+            .catch((error) => {
+              if (mounted.current) setLoadError(errorMessage(error, "Failed to load messages."));
+            })
+            .finally(() => {
+              loadInFlight.current = false;
+            });
+      },
+      [requestId, actorId, view]
   );
 
   useEffect(() => {
@@ -158,8 +166,6 @@ function MessageThread({
     };
   }, [loadThread]);
 
-  // The card's status changes when the mechanic accepts/declines/completes,
-  // which can close messaging before the next poll.
   useEffect(() => {
     if (lastRequestStatus.current === requestStatus) return;
     lastRequestStatus.current = requestStatus;
@@ -205,9 +211,9 @@ function MessageThread({
       if (!mounted.current) return;
 
       setThread((previous) =>
-        previous && !previous.messages.some((message) => message.id === sent.id)
-          ? { ...previous, messages: [...previous.messages, sent] }
-          : previous
+          previous && !previous.messages.some((message) => message.id === sent.id)
+              ? { ...previous, messages: [...previous.messages, sent] }
+              : previous
       );
       setDraft("");
       announceNotificationsUpdated();
@@ -224,110 +230,110 @@ function MessageThread({
 
   if (!thread) {
     return (
-      <div className="mt-3 rounded-lg bg-white p-4 text-sm">
-        {loadError ? (
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-red-700">{loadError}</p>
-            <button
-              type="button"
-              onClick={() => loadThread(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-            >
-              <RefreshCw size={13} />
-              Retry
-            </button>
-          </div>
-        ) : (
-          <p className="flex items-center gap-2 text-slate-500">
-            <Loader2 size={15} className="animate-spin" />
-            Loading messages...
-          </p>
-        )}
-      </div>
+        <div className="mt-3 rounded-lg bg-white p-4 text-sm">
+          {loadError ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-red-700">{loadError}</p>
+                <button
+                    type="button"
+                    onClick={() => loadThread(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  <RefreshCw size={13} />
+                  Retry
+                </button>
+              </div>
+          ) : (
+              <p className="flex items-center gap-2 text-slate-500">
+                <Loader2 size={15} className="animate-spin" />
+                Loading messages...
+              </p>
+          )}
+        </div>
     );
   }
 
   return (
-    <div className="mt-3 space-y-3">
-      <div
-        ref={listRef}
-        className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-white p-3"
-        aria-live="polite"
-      >
-        {thread.messages.length === 0 ? (
-          <p className="py-6 text-center text-sm text-slate-500">
-            {thread.can_send
-              ? "No messages yet. Send a message to start the conversation."
-              : "No messages were sent for this request."}
-          </p>
-        ) : (
-          thread.messages.map((message) => {
-            const mine = message.sender_role === view;
+      <div className="mt-3 space-y-3">
+        <div
+            ref={listRef}
+            className="max-h-80 space-y-3 overflow-y-auto rounded-lg bg-white p-3"
+            aria-live="polite"
+        >
+          {thread.messages.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-500">
+                {thread.can_send
+                    ? "No messages yet. Send a message to start the conversation."
+                    : "No messages were sent for this request."}
+              </p>
+          ) : (
+              thread.messages.map((message) => {
+                const mine = message.sender_role === view;
 
-            return (
-              <div key={message.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                <div
-                  className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm ${
-                    mine
-                      ? "rounded-br-md bg-[#001F3F] text-white"
-                      : "rounded-bl-md bg-slate-100 text-slate-800"
-                  }`}
-                >
-                  <p className="whitespace-pre-wrap break-words leading-6">{message.body}</p>
-                  <p className={`mt-1 text-[11px] ${mine ? "text-white/60" : "text-slate-500"}`}>
-                    {mine ? "You" : counterpartName} · {formatTimestamp(message.created_at)}
-                  </p>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
+                return (
+                    <div key={message.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                      <div
+                          className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm ${
+                              mine
+                                  ? "rounded-br-md bg-[#001F3F] text-white"
+                                  : "rounded-bl-md bg-slate-100 text-slate-800"
+                          }`}
+                      >
+                        <p className="whitespace-pre-wrap break-words leading-6">{message.body}</p>
+                        <p className={`mt-1 text-[11px] ${mine ? "text-white/60" : "text-slate-500"}`}>
+                          {mine ? "You" : counterpartName} · {formatTimestamp(message.created_at)}
+                        </p>
+                      </div>
+                    </div>
+                );
+              })
+          )}
+        </div>
 
-      {loadError && <p className="text-xs text-red-700">{loadError}</p>}
+        {loadError && <p className="text-xs text-red-700">{loadError}</p>}
 
-      {thread.can_send ? (
-        <form onSubmit={(event) => void submit(event)} className="space-y-2">
-          <label htmlFor={`message-${requestId}`} className="sr-only">
-            Message {counterpartName}
-          </label>
-          <textarea
-            id={`message-${requestId}`}
-            value={draft}
-            maxLength={MAX_MESSAGE_LENGTH}
-            rows={3}
-            disabled={sending}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              setSendError("");
-            }}
-            placeholder={`Message ${counterpartName}`}
-            className="w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
-          />
-          <div className="flex items-center justify-between gap-3">
+        {thread.can_send ? (
+            <form onSubmit={(event) => void submit(event)} className="space-y-2">
+              <label htmlFor={`message-${requestId}`} className="sr-only">
+                Message {counterpartName}
+              </label>
+              <textarea
+                  id={`message-${requestId}`}
+                  value={draft}
+                  maxLength={MAX_MESSAGE_LENGTH}
+                  rows={3}
+                  disabled={sending}
+                  onChange={(event) => {
+                    setDraft(event.target.value);
+                    setSendError("");
+                  }}
+                  placeholder={`Message ${counterpartName}`}
+                  className="w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm outline-none focus:border-[#001F3F] focus:ring-1 focus:ring-[#001F3F] disabled:bg-slate-50"
+              />
+              <div className="flex items-center justify-between gap-3">
             <span className="text-xs text-slate-400">
               {draft.length}/{MAX_MESSAGE_LENGTH}
             </span>
-            <button
-              type="submit"
-              disabled={sending || !trimmedDraft}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#003366] disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-              Send
-            </button>
-          </div>
-          {sendError && <p className="text-sm text-red-700">{sendError}</p>}
-        </form>
-      ) : (
-        <div className="space-y-2">
-          {sendError && <p className="text-sm text-red-700">{sendError}</p>}
-          <p className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-600">
-            <Lock size={14} className="shrink-0 text-slate-400" />
-            {readOnlyMessage(thread.status)}
-          </p>
-        </div>
-      )}
-    </div>
+                <button
+                    type="submit"
+                    disabled={sending || !trimmedDraft}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#001F3F] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#003366] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                  Send
+                </button>
+              </div>
+              {sendError && <p className="text-sm text-red-700">{sendError}</p>}
+            </form>
+        ) : (
+            <div className="space-y-2">
+              {sendError && <p className="text-sm text-red-700">{sendError}</p>}
+              <p className="flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2.5 text-sm text-slate-600">
+                <Lock size={14} className="shrink-0 text-slate-400" />
+                {readOnlyMessage(thread.status)}
+              </p>
+            </div>
+        )}
+      </div>
   );
 }

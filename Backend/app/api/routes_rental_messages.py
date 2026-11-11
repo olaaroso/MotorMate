@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Literal
 
 from bson import ObjectId
 from fastapi import APIRouter, Body, HTTPException, Query
@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from app.api.routes_diy import get_rental_requests_collection
 from app.core.database import db_instance
+from app.services.notifications import create_notification
 
 router = APIRouter(prefix="/api/diy/rental-messages", tags=["Rental Messages"])
 
@@ -14,6 +15,9 @@ RentalRole = Literal["owner", "borrower"]
 PARTICIPANT_FIELDS = {"owner": "owner_id", "borrower": "renter_id"}
 CLOSED_STATUSES = {"completed", "cancelled", "rejected"}
 MAX_MESSAGES_RETURNED = 500
+
+OWNER_TOOLS_PAGE = "/myTools"
+BORROWER_RENTALS_PAGE = "/rentals"
 
 
 class MessagePayload(BaseModel):
@@ -132,21 +136,54 @@ async def send_rental_message(
     result = await messages_collection.insert_one(message_doc)
     message_doc["_id"] = result.inserted_id
 
+    # Count total unread messages for the recipient on this rental
+    unread_for_recipient = await messages_collection.count_documents(
+        {
+            "rental_id": rental_id,
+            "sender_role": role,
+            "read_at": None,
+        }
+    )
+
     recipient_id = rental.get("renter_id" if role == "owner" else "owner_id")
-    sender_name = rental.get("seller_name" if role == "owner" else "renter_name") or "MotorMate User"
+    sender_name = (
+            rental.get("seller_name" if role == "owner" else "renter_name")
+            or "MotorMate User"
+    )
     tool_name = rental.get("tool_name") or "Tool"
+    destination = (
+        f"{BORROWER_RENTALS_PAGE}?rental={rental_id}"
+        if role == "owner"
+        else f"{OWNER_TOOLS_PAGE}?rental={rental_id}"
+    )
+    plural = "message" if unread_for_recipient == 1 else "messages"
+    title = f"{unread_for_recipient} unread {plural} from {sender_name}"
+    notif_body = f"{sender_name} sent you a message about {tool_name}."
 
     if recipient_id and db_instance.db is not None:
         try:
-            await db_instance.db["notifications"].insert_one(
+            notifications = db_instance.db["notifications"]
+            existing = await notifications.find_one_and_update(
                 {
                     "user_id": recipient_id,
-                    "title": f"New Message from {sender_name}",
-                    "message": f"{sender_name} sent a message about {tool_name}.",
+                    "destination": destination,
                     "is_read": False,
-                    "created_at": sent_at,
-                }
+                },
+                {
+                    "$set": {
+                        "title": title,
+                        "message": notif_body,
+                        "created_at": sent_at,
+                    }
+                },
             )
+            if not existing:
+                await create_notification(
+                    recipient_id,
+                    title,
+                    notif_body,
+                    destination=destination,
+                )
         except Exception:
             pass
 
@@ -170,4 +207,23 @@ async def mark_rental_thread_read(
         },
         {"$set": {"read_at": now_iso()}},
     )
+
+    if db_instance.db is not None:
+        destination = (
+            f"{OWNER_TOOLS_PAGE}?rental={rental_id}"
+            if role == "owner"
+            else f"{BORROWER_RENTALS_PAGE}?rental={rental_id}"
+        )
+        try:
+            await db_instance.db["notifications"].update_many(
+                {
+                    "user_id": actor_id.strip(),
+                    "destination": destination,
+                    "is_read": False,
+                },
+                {"$set": {"is_read": True}},
+            )
+        except Exception:
+            pass
+
     return {"modified_count": result.modified_count, "unread_count": 0}

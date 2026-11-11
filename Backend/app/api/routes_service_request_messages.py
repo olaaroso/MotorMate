@@ -122,21 +122,54 @@ async def discard_message(messages, message_id: ObjectId):
         logger.exception("Failed to discard unsent message %s", message_id)
 
 
-async def notify_recipient_of_message(request_document: dict, recipient_role: str):
-    """Points the recipient at the request; the message body stays out of notifications."""
+async def notify_recipient_of_message(
+        request_document: dict,
+        recipient_role: str,
+        unread_count: int,
+):
+    """Creates or updates the recipient's notification with the exact unread count."""
     request_id = str(request_document["_id"])
     service = request_document.get("service_requested") or "service"
     when = describe_appointment(request_document)
+    plural = "message" if unread_count == 1 else "messages"
 
     if recipient_role == "mechanic":
-        customer = request_document.get("customer_name") or "A customer"
-        await create_notification(
-            request_document.get("mechanic_id"),
-            "New Message",
-            f"{customer} sent you a message about their {service} request for {when}.",
-            destination=f"{MECHANIC_REQUESTS_PAGE}?request={request_id}",
-        )
+        sender_name = request_document.get("customer_name") or "A customer"
+        recipient_id = request_document.get("mechanic_id")
+        destination = f"{MECHANIC_REQUESTS_PAGE}?request={request_id}"
+    else:
+        sender_name = request_document.get("shop_name") or "MotorMate Mechanic"
+        recipient_id = request_document.get("customer_id")
+        destination = f"{CUSTOMER_APPOINTMENTS_PAGE}?request={request_id}"
+
+    title = f"{unread_count} unread {plural} from {sender_name}"
+    message = f"{sender_name} sent you a message about your {service} request for {when}."
+
+    if not recipient_id or db_instance.db is None:
         return
+
+    notifications = get_collection("notifications")
+    existing = await notifications.find_one_and_update(
+        {
+            "user_id": recipient_id,
+            "destination": destination,
+            "is_read": False,
+        },
+        {
+            "$set": {
+                "title": title,
+                "message": message,
+                "created_at": now_iso(),
+            }
+        },
+    )
+    if not existing:
+        await create_notification(
+            recipient_id,
+            title,
+            message,
+            destination=destination,
+        )
 
     shop = request_document.get("shop_name") or "MotorMate Mechanic"
     await create_notification(
@@ -331,10 +364,8 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
             raise
         raise HTTPException(status_code=500, detail="Failed to send message.")
 
-    # The atomic $inc means only the message that starts an unread streak
-    # sees 0 here, so a burst of messages produces one notification.
-    if unread_count_for(before_update, recipient_role) == 0:
-        await notify_recipient_of_message(latest, recipient_role)
+    new_unread_count = unread_count_for(before_update, recipient_role) + 1
+    await notify_recipient_of_message(latest, recipient_role, new_unread_count)
 
     return {
         "message": "Message sent.",
@@ -344,9 +375,9 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
 
 @router.patch("/{request_id}/messages/read")
 async def mark_request_messages_read(
-    request_id: str,
-    actor_id: str = Query(..., min_length=1),
-    view: MessagingView = Query(...),
+        request_id: str,
+        actor_id: str = Query(..., min_length=1),
+        view: MessagingView = Query(...),
 ):
     """Clears the actor's unread count for this request's conversation."""
     await ensure_messaging_indexes()
@@ -361,6 +392,15 @@ async def mark_request_messages_read(
                     f"last_read_at.{view}": now_iso(),
                 }
             },
+        )
+        destination = (
+            f"{MECHANIC_REQUESTS_PAGE}?request={request_id}"
+            if view == "mechanic"
+            else f"{CUSTOMER_APPOINTMENTS_PAGE}?request={request_id}"
+        )
+        await get_collection("notifications").update_many(
+            {"user_id": require_actor_id(actor_id), "destination": destination, "is_read": False},
+            {"$set": {"is_read": True}},
         )
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to mark messages as read.")
