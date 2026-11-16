@@ -13,6 +13,7 @@ pytest-asyncio
 pytest-mock
 httpx
 email-validator
+firebase-admin
 
 # Machine Learning Dependencies
 torch
