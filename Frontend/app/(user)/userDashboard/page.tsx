@@ -253,7 +253,7 @@ export default function DashboardPage() {
           icon={Wrench}
           helper={
             maintenanceAlerts.length
-              ? "Needs attention"
+              ? "Pending alerts"
               : "Nothing urgent"
           }
           tone={maintenanceAlerts.length ? "amber" : "green"}
@@ -269,7 +269,7 @@ export default function DashboardPage() {
               : "$0"
           }
           icon={CircleDollarSign}
-          helper="From current predictions"
+          helper="Based on current predictions"
           tone="slate"
         />
       </section>
@@ -406,7 +406,7 @@ export default function DashboardPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-lg font-semibold text-slate-950">
-                Needs Attention
+                Pending Maintenance
               </h2>
               <p className="mt-1 text-sm text-slate-500">
                 Maintenance items surfaced from your saved vehicles.
