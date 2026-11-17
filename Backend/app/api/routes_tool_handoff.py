@@ -1,17 +1,11 @@
-"""ToolDrop pickup and return instructions, without Firebase Admin.
-
-COURSE PROJECT / DEMO: this version does NOT authenticate callers. Pickup
-addresses and handoff instructions may be requested by anyone who knows an
-approved rental ID. Listing edits only check the supplied owner_id, which
-can be spoofed. Do NOT deploy with real home addresses to a public server.
-Original /api/diy/rental-requests/{id}/approve remains unchanged.
-"""
+"""Private pickup and return instructions for ToolDrop participants."""
 from datetime import datetime, timezone
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid, firebase_uid
 from app.api.routes_diy import get_tools_collection, get_rental_requests_collection
 
 router = APIRouter(prefix="/api/diy/handoff", tags=["ToolDrop Handoff"])
@@ -35,7 +29,12 @@ def cleaned(payload: HandoffDetails):
 
 
 @router.get("/listings/{listing_id}")
-async def get_listing_handoff(listing_id: str, owner_id: str = Query(...)):
+async def get_listing_handoff(
+    listing_id: str,
+    owner_id: str = Query(...),
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(listing_id):
         raise HTTPException(400, "Invalid listing ID")
     listing = await get_tools_collection().find_one({"_id": ObjectId(listing_id), "owner_id": owner_id})
@@ -46,7 +45,13 @@ async def get_listing_handoff(listing_id: str, owner_id: str = Query(...)):
 
 
 @router.put("/listings/{listing_id}")
-async def save_listing_handoff(listing_id: str, payload: HandoffDetails, owner_id: str = Query(...)):
+async def save_listing_handoff(
+    listing_id: str,
+    payload: HandoffDetails,
+    owner_id: str = Query(...),
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(listing_id):
         raise HTTPException(400, "Invalid listing ID")
     listing = await get_tools_collection().find_one({"_id": ObjectId(listing_id), "owner_id": owner_id})
@@ -63,14 +68,13 @@ async def save_listing_handoff(listing_id: str, payload: HandoffDetails, owner_i
 
 
 @router.put("/defaults/{owner_id}")
-async def save_owner_defaults(owner_id: str, payload: HandoffDetails):
-    """Course project: mirror the owner's Firestore defaults for rental fallback.
-
-    This demo endpoint intentionally does not authenticate callers. Do not use
-    with actual home addresses or deploy as a public service.
-    """
-    if not owner_id.strip():
-        raise HTTPException(400, "Owner ID required")
+async def save_owner_defaults(
+    owner_id: str,
+    payload: HandoffDetails,
+    current_user: dict = Depends(require_firebase_user),
+):
+    """Mirror the owner's Firestore defaults for rental fallback."""
+    owner_id = require_matching_uid(owner_id, current_user)
     values = cleaned(payload)
     await database()["owner_handoff_defaults"].update_one(
         {"owner_id": owner_id},
@@ -122,13 +126,19 @@ async def snapshot_handoff_for_rental(rental_id: str, listing_id: str) -> None:
 
 
 @router.get("/rentals/{rental_id}")
-async def get_rental_handoff(rental_id: str):
+async def get_rental_handoff(
+    rental_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    uid = firebase_uid(current_user)
     if not ObjectId.is_valid(rental_id):
         raise HTTPException(400, "Invalid rental ID")
     rental = await get_rental_requests_collection().find_one({"_id": ObjectId(rental_id)})
     if rental is None:
         raise HTTPException(404, "Rental not found")
-    if rental.get("status") in ("pending", "rejected", "cancelled"):
+    if uid not in (rental.get("owner_id"), rental.get("renter_id")):
+        raise HTTPException(403, "Only rental participants can view handoff instructions.")
+    if rental.get("status") not in ("approved", "pickup_pending", "active", "return_pending", "completed"):
         raise HTTPException(403, "Handoff details are only available for approved rentals")
     db = database()
     snapshot = await db["rental_handoff_snapshots"].find_one({"rental_id": rental_id})
@@ -149,12 +159,14 @@ async def get_rental_handoff(rental_id: str):
 
 
 @router.put("/rentals/{rental_id}")
-async def update_rental_handoff(rental_id: str, payload: HandoffDetails, owner_id: str = Query(...)):
-    """Demo-only: change pickup/return details for one approved rental.
-
-    This endpoint has NO identity verification; the owner_id query is spoofable.
-    Do not deploy publicly with real addresses or use for production.
-    """
+async def update_rental_handoff(
+    rental_id: str,
+    payload: HandoffDetails,
+    owner_id: str = Query(...),
+    current_user: dict = Depends(require_firebase_user),
+):
+    """Change pickup and return details for one approved rental."""
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(rental_id):
         raise HTTPException(400, "Invalid rental ID")
     rental = await get_rental_requests_collection().find_one({

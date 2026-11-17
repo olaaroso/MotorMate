@@ -1,3 +1,4 @@
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { CheckCircle2, Loader2, QrCode, Smartphone, X } from "lucide-react";
@@ -15,7 +16,7 @@ type QRHandoffButtonProps = {
     actorId: string;
     stage: HandoffStage;
     label?: string;
-    onUploaded: (evidence: { photo_url: string; notes?: string }) => void;
+    onUploaded: () => void;
 };
 
 export default function QRHandoffButton({
@@ -39,7 +40,7 @@ export default function QRHandoffButton({
         setToken(null);
 
         try {
-            const res = await fetch(`${apiUrl}/api/diy/rental-requests/${rentalId}/qr-session`, {
+            const res = await authenticatedFetch(`${apiUrl}/api/diy/rental-requests/${rentalId}/qr-session`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ actor_id: actorId, stage }),
@@ -61,12 +62,20 @@ export default function QRHandoffButton({
 
         const timer = window.setInterval(async () => {
             try {
-                const res = await fetch(`${apiUrl}/api/diy/qr-session/${token}`);
+                const res = await fetch(`${apiUrl}/api/diy/qr-session/${token}`, {
+                    cache: "no-store",
+                    referrerPolicy: "no-referrer",
+                });
+                if (res.status === 404 || res.status === 410) {
+                    setToken(null);
+                    setError("This QR link is no longer valid. Generate a new one.");
+                    return;
+                }
                 if (!res.ok) return;
                 const data = await res.json();
-                if (data.status === "completed" && data.photo_url) {
+                if (data.status === "completed") {
                     setCompleted(true);
-                    onUploaded({ photo_url: data.photo_url, notes: data.notes || "" });
+                    onUploaded();
                     setTimeout(() => setOpen(false), 1200);
                 }
             } catch {

@@ -56,6 +56,7 @@ def complete_at(db, monkeypatch, now):
             ServiceRequestStatusUpdate(
                 mechanic_id="mechanic-1", status="completed", completed_mileage=51000
             ),
+            current_user={"uid": 'mechanic-1'},
         )
     )
 

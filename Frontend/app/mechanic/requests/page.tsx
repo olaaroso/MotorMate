@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -102,7 +103,7 @@ async function fetchSharedHistory(
   mechanicId: string
 ): Promise<SharedHistoryRecord[]> {
   const params = new URLSearchParams({ mechanic_id: mechanicId });
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${apiUrl}/api/service-requests/${encodeURIComponent(requestId)}/shared-history?${params.toString()}`
   );
   const data = (await response.json().catch(() => ({}))) as {
@@ -129,7 +130,7 @@ const FILTERS: Array<{ value: RequestFilter; label: string }> = [
 async function fetchMechanicRequests(
   mechanicId: string
 ): Promise<ServiceRequest[]> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${apiUrl}/api/service-requests/mechanic/${encodeURIComponent(mechanicId)}`
   );
   const data = (await response.json().catch(() => ({}))) as RequestsResponse & {
@@ -442,7 +443,7 @@ function MechanicRequestsContent() {
       setError("");
       setNotice("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/service-requests/${encodeURIComponent(requestId)}/status`,
         {
           method: "PATCH",
@@ -583,7 +584,7 @@ function MechanicRequestsContent() {
         actor_id: mechanicId,
         view: "mechanic",
       });
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/service-requests/${encodeURIComponent(request.id)}?${params.toString()}`,
         { method: "DELETE" }
       );

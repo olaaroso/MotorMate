@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
@@ -98,6 +99,7 @@ function MaintenanceHubContent() {
     const [showQuestionnaire, setShowQuestionnaire] = useState(false);
     const [isBlurred, setIsBlurred] = useState(false);
     const [savingData, setSavingData] = useState(false);
+    const [questionnaireError, setQuestionnaireError] = useState("");
 
     const [climate, setClimate] = useState("Moderate");
     const [primaryUsage, setPrimaryUsage] = useState("Daily Commuting");
@@ -117,7 +119,7 @@ function MaintenanceHubContent() {
 
             let currentGarage: ApiVehicle[] = [];
             try {
-                const res = await fetch(`${apiUrl}/api/vin/vehicles/${user.uid}`);
+                const res = await authenticatedFetch(`${apiUrl}/api/vin/vehicles/${user.uid}`);
                 if (res.ok) {
                     const data = await res.json();
                     currentGarage = data.vehicles || [];
@@ -126,7 +128,7 @@ function MaintenanceHubContent() {
                         const vehiclesWithData = await Promise.all(currentGarage.map(async (car: ApiVehicle) => {
                             const id = car._id || car.id;
                             try {
-                                const pRes = await fetch(`${apiUrl}/api/predict/vehicle/${id}?owner_id=${encodeURIComponent(user.uid)}`);
+                                const pRes = await authenticatedFetch(`${apiUrl}/api/predict/vehicle/${id}?owner_id=${encodeURIComponent(user.uid)}`);
                                 if (pRes.ok) {
                                     const pData = await pRes.json();
                                     car.has_in_depth_data = Boolean(pData.model_profile?.climate_condition);
@@ -149,7 +151,7 @@ function MaintenanceHubContent() {
             }
 
             try {
-                const response = await fetch(`${apiUrl}/api/predict/vehicle/${vehicleId}?owner_id=${encodeURIComponent(user.uid)}`);
+                const response = await authenticatedFetch(`${apiUrl}/api/predict/vehicle/${vehicleId}?owner_id=${encodeURIComponent(user.uid)}`);
                 if (!response.ok) throw new Error("Failed to load maintenance data.");
 
                 const data = await response.json();
@@ -233,6 +235,7 @@ function MaintenanceHubContent() {
     };
 
     const handleSkipQuestionnaire = () => {
+        setQuestionnaireError("");
         if (activeModalVehicle) {
             const id = activeModalVehicle._id || activeModalVehicle.id;
             setActiveModalVehicle(null);
@@ -245,35 +248,42 @@ function MaintenanceHubContent() {
     };
 
     const handleSubmitQuestionnaire = async () => {
-        if (!auth.currentUser) return;
-        setSavingData(true);
-
+        const user = auth.currentUser;
         const id = activeModalVehicle ? (activeModalVehicle._id || activeModalVehicle.id) : vehicleId;
-        if (!id) return;
+        if (!user || !id) return;
+        setSavingData(true);
+        setQuestionnaireError("");
 
         try {
-            await fetch(`${apiUrl}/api/vin/vehicles/${id}`, {
+            const saved = await authenticatedFetch(`${apiUrl}/api/vin/vehicles/${id}`, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    owner_id: auth.currentUser.uid,
+                    owner_id: user.uid,
                     climate_condition: climate,
                     primary_usage: primaryUsage,
                     recent_major_service: recentService
                 }),
             });
+            if (!saved.ok) {
+                const data = await saved.json().catch(() => ({}));
+                throw new Error(typeof data.detail === "string" ? data.detail : "Could not save the questionnaire.");
+            }
 
-            await fetch(`${apiUrl}/api/predict/vehicle/${id}`, {
+            const prediction = await authenticatedFetch(`${apiUrl}/api/predict/vehicle/${id}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ owner_id: auth.currentUser.uid })
+                body: JSON.stringify({ owner_id: user.uid })
             });
+            if (!prediction.ok) {
+                throw new Error("Questionnaire saved. Diagnostics could not run. Please try again.");
+            }
 
             if (activeModalVehicle) {
                 setActiveModalVehicle(null);
                 router.push(`/maintenance?vehicle=${id}`);
             } else {
-                const response = await fetch(`${apiUrl}/api/predict/vehicle/${id}?owner_id=${encodeURIComponent(auth.currentUser.uid)}`);
+                const response = await authenticatedFetch(`${apiUrl}/api/predict/vehicle/${id}?owner_id=${encodeURIComponent(user.uid)}`);
                 if (response.ok) {
                     const data = await response.json();
                     setVehicleDetails(prev => ({
@@ -289,14 +299,7 @@ function MaintenanceHubContent() {
                 router.replace(`/maintenance?vehicle=${id}`, { scroll: false });
             }
         } catch (err) {
-            console.error("Failed to save questionnaire:", err);
-            if (activeModalVehicle) {
-                setActiveModalVehicle(null);
-                router.push(`/maintenance?vehicle=${id}`);
-            } else {
-                setShowQuestionnaire(false);
-                setIsBlurred(false);
-            }
+            setQuestionnaireError(err instanceof Error ? err.message : "Could not complete the questionnaire.");
         } finally {
             setSavingData(false);
         }
@@ -452,6 +455,7 @@ function MaintenanceHubContent() {
                                 </div>
                             </div>
 
+                            {questionnaireError && <p role="alert" className="mt-4 text-sm text-red-700">{questionnaireError}</p>}
                             <div className="mt-8 flex items-center justify-between gap-4 border-t border-slate-100 pt-6">
                                 <button
                                     onClick={handleSkipQuestionnaire}
@@ -829,6 +833,7 @@ function MaintenanceHubContent() {
                             </div>
                         </div>
 
+                        {questionnaireError && <p role="alert" className="mt-4 text-sm text-red-700">{questionnaireError}</p>}
                         <div className="mt-8 flex items-center justify-between gap-4 border-t border-slate-100 pt-6">
                             <button
                                 onClick={handleSkipQuestionnaire}

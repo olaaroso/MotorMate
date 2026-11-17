@@ -1,4 +1,5 @@
 "use client";
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useState } from "react";
 import { CalendarClock, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { auth } from "@/lib/firebase";
@@ -25,7 +26,7 @@ export default function OwnerRentalExtensionControls({ rental, onUpdated }: Prop
     if (!window.confirm(approve ? "Approve the later return date?" : "Decline this extension request?")) return;
     setWorking(true); setError(""); setNotice("");
     try {
-      const response = await fetch(`${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/extension/decision`, {
+      const response = await authenticatedFetch(`${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/extension/decision`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ owner_id: user.uid, approve }),
       });

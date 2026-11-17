@@ -1,4 +1,9 @@
+import base64
+import binascii
+import hashlib
+import re
 import secrets
+from io import BytesIO
 
 from datetime import date, datetime, timezone, timedelta
 
@@ -8,13 +13,16 @@ from typing import List, Literal, Optional
 
 from bson import ObjectId
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from PIL import Image
 
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 
 
 router = APIRouter(
@@ -370,11 +378,22 @@ def serialize_mongo_document(document: dict):
     document["id"] = str(document["_id"])
 
     document.pop("_id", None)
+    document.pop("qr_uploads", None)
 
 
 
     return document
 
+
+
+def serialize_public_listing(document: dict) -> dict:
+    fields = (
+        "owner_id", "seller_name", "item_name", "category", "condition",
+        "price", "deposit", "distance", "rating", "reviews", "location",
+        "zip_code", "availability", "description", "specifications",
+        "photo_urls", "created_at",
+    )
+    return {"id": str(document["_id"]), **{key: document[key] for key in fields if key in document}}
 
 
 async def normalize_legacy_listing_availability(
@@ -519,7 +538,7 @@ async def list_listings(
 
             results.append(
 
-                serialize_mongo_document(tool)
+                serialize_public_listing(tool)
 
             )
 
@@ -574,9 +593,10 @@ async def list_listings(
 async def get_owner_listings(
 
     owner_id: str,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
+    owner_id = require_matching_uid(owner_id, current_user)
     owner_id = owner_id.strip()
 
 
@@ -755,7 +775,7 @@ async def get_listing(
         return {
 
             "listing":
-                serialize_mongo_document(tool),
+                serialize_public_listing(tool),
 
             "reserved_ranges":
                 reserved_ranges,
@@ -805,9 +825,10 @@ async def get_listing(
 async def create_listing(
 
     payload: DIYListingCreate,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
+    owner_id = require_matching_uid(payload.owner_id, current_user)
     tools_collection = get_tools_collection()
 
 
@@ -827,6 +848,7 @@ async def create_listing(
     try:
 
         doc = payload.model_dump()
+        doc["owner_id"] = owner_id
 
 
 
@@ -907,9 +929,10 @@ async def update_listing(
     owner_id: str,
 
     payload: DIYListingUpdate,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(listing_id):
 
         raise HTTPException(
@@ -1099,9 +1122,10 @@ async def delete_listing(
     listing_id: str,
 
     owner_id: str,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(listing_id):
 
         raise HTTPException(
@@ -1227,7 +1251,7 @@ async def delete_listing(
 async def create_rental_request(
 
     payload: RentalRequestCreate,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
     """
@@ -1243,6 +1267,7 @@ async def create_rental_request(
     by the renter.
 
     """
+    require_matching_uid(payload.renter_id, current_user)
 
 
 
@@ -1817,9 +1842,10 @@ async def create_rental_request(
 async def get_renter_rental_requests(
 
     renter_id: str,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
+    renter_id = require_matching_uid(renter_id, current_user)
     renter_id = renter_id.strip()
 
 
@@ -1941,9 +1967,10 @@ async def get_renter_rental_requests(
 async def get_owner_rental_requests(
 
     owner_id: str,
-
+    current_user: dict = Depends(require_firebase_user),
 ):
 
+    owner_id = require_matching_uid(owner_id, current_user)
     owner_id = owner_id.strip()
 
 
@@ -2051,7 +2078,9 @@ async def get_owner_rental_requests(
 async def approve_rental_request(
     request_id: str,
     owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(request_id):
         raise HTTPException(
             status_code=400,
@@ -2301,7 +2330,12 @@ async def approve_rental_request(
 # =========================================================
 
 @router.patch("/rental-requests/{request_id}/borrower-cancel")
-async def borrower_cancel_rental(request_id: str, renter_id: str):
+async def borrower_cancel_rental(
+    request_id: str,
+    renter_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    renter_id = require_matching_uid(renter_id, current_user)
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid rental request ID.")
 
@@ -2381,7 +2415,12 @@ async def borrower_cancel_rental(request_id: str, renter_id: str):
 # =========================================================
 
 @router.patch("/rental-requests/{request_id}/cancel")
-async def cancel_rental(request_id: str, owner_id: str):
+async def cancel_rental(
+    request_id: str,
+    owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(request_id):
         raise HTTPException(
             status_code=400,
@@ -2520,7 +2559,6 @@ class ConditionEvidence(BaseModel):
 
 
 def _safe_evidence(payload: ConditionEvidence) -> dict:
-    import re
     photo = (payload.photo_url or "").strip()
     notes = (payload.condition_notes or "").strip()
     if photo and not re.fullmatch(r"https://[a-zA-Z0-9.-]+/[^\s]+", photo):
@@ -2529,6 +2567,29 @@ def _safe_evidence(payload: ConditionEvidence) -> dict:
         raise HTTPException(400, "Photo URL or notes are too long.")
     return {"photo_url": photo, "notes": notes}
 
+
+def _confirm_evidence(fields: dict, evidence_field: str, payload: ConditionEvidence):
+    evidence = {key: value for key, value in _safe_evidence(payload).items() if value}
+    if not evidence:
+        return {"$set": fields}
+
+    # Merge at write time to retain a photo uploaded before confirmation.
+    previous = f"${evidence_field}"
+    updates = {key: {"$literal": value} for key, value in evidence.items()}
+    if "photo_url" in evidence:
+        previous_photo = f"{previous}.photo_url"
+        updates["photo_url"] = {"$cond": [
+            {"$eq": [{"$ifNull": [previous_photo, ""]}, ""]},
+            updates["photo_url"],
+            previous_photo,
+        ]}
+    return [{"$set": {
+        **fields,
+        evidence_field: {"$mergeObjects": [
+            {"$cond": [{"$eq": [{"$type": previous}, "object"]}, previous, {}]},
+            updates,
+        ]},
+    }}]
 
 async def _notify_handoff(user_id: str, title: str, message: str) -> None:
     if not user_id:
@@ -2547,10 +2608,15 @@ async def _notify_handoff(user_id: str, title: str, message: str) -> None:
 
 
 @router.patch("/rental-requests/{request_id}/pickup/owner")
-async def owner_confirm_pickup(request_id: str, owner_id: str, payload: ConditionEvidence):
+async def owner_confirm_pickup(
+    request_id: str,
+    owner_id: str,
+    payload: ConditionEvidence,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(request_id) or not owner_id.strip():
         raise HTTPException(400, "Valid rental ID and owner_id required.")
-    evidence = _safe_evidence(payload)
     rentals = get_rental_requests_collection()
     now = datetime.now(timezone.utc).isoformat()
     result = await rentals.find_one_and_update(
@@ -2560,10 +2626,9 @@ async def owner_confirm_pickup(request_id: str, owner_id: str, payload: Conditio
             "start_date": {"$lte": date.today().isoformat()},
             "end_date": {"$gte": date.today().isoformat()},
         },
-        {"$set": {
+        _confirm_evidence({
             "status": "pickup_pending", "pickup_owner_confirmed_at": now,
-            "pickup_owner_evidence": evidence,
-        }},
+        }, "pickup_owner_evidence", payload),
         return_document=True,
     )
     if not result:
@@ -2574,16 +2639,21 @@ async def owner_confirm_pickup(request_id: str, owner_id: str, payload: Conditio
 
 
 @router.patch("/rental-requests/{request_id}/pickup/borrower")
-async def borrower_confirm_pickup(request_id: str, renter_id: str, payload: ConditionEvidence):
+async def borrower_confirm_pickup(
+    request_id: str,
+    renter_id: str,
+    payload: ConditionEvidence,
+    current_user: dict = Depends(require_firebase_user),
+):
+    renter_id = require_matching_uid(renter_id, current_user)
     if not ObjectId.is_valid(request_id) or not renter_id.strip():
         raise HTTPException(400, "Valid rental ID and renter_id required.")
-    evidence = _safe_evidence(payload)
     rentals = get_rental_requests_collection()
     now = datetime.now(timezone.utc).isoformat()
     result = await rentals.find_one_and_update(
         {"_id": ObjectId(request_id), "renter_id": renter_id.strip(), "status": "pickup_pending", "handoff_issue_open": {"$ne": True}},
-        {"$set": {"status": "active", "pickup_borrower_confirmed_at": now,
-                  "pickup_borrower_evidence": evidence}},
+        _confirm_evidence({"status": "active", "pickup_borrower_confirmed_at": now},
+                          "pickup_borrower_evidence", payload),
         return_document=True,
     )
     if not result:
@@ -2594,16 +2664,21 @@ async def borrower_confirm_pickup(request_id: str, renter_id: str, payload: Cond
 
 
 @router.patch("/rental-requests/{request_id}/return/borrower")
-async def borrower_request_return(request_id: str, renter_id: str, payload: ConditionEvidence):
+async def borrower_request_return(
+    request_id: str,
+    renter_id: str,
+    payload: ConditionEvidence,
+    current_user: dict = Depends(require_firebase_user),
+):
+    renter_id = require_matching_uid(renter_id, current_user)
     if not ObjectId.is_valid(request_id) or not renter_id.strip():
         raise HTTPException(400, "Valid rental ID and renter_id required.")
-    evidence = _safe_evidence(payload)
     rentals = get_rental_requests_collection()
     now = datetime.now(timezone.utc).isoformat()
     result = await rentals.find_one_and_update(
         {"_id": ObjectId(request_id), "renter_id": renter_id.strip(), "status": "active"},
-        {"$set": {"status": "return_pending", "return_borrower_submitted_at": now,
-                  "return_borrower_evidence": evidence}},
+        _confirm_evidence({"status": "return_pending", "return_borrower_submitted_at": now},
+                          "return_borrower_evidence", payload),
         return_document=True,
     )
     if not result:
@@ -2614,16 +2689,21 @@ async def borrower_request_return(request_id: str, renter_id: str, payload: Cond
 
 
 @router.patch("/rental-requests/{request_id}/return/owner")
-async def owner_confirm_return(request_id: str, owner_id: str, payload: ConditionEvidence):
+async def owner_confirm_return(
+    request_id: str,
+    owner_id: str,
+    payload: ConditionEvidence,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(request_id) or not owner_id.strip():
         raise HTTPException(400, "Valid rental ID and owner_id required.")
-    evidence = _safe_evidence(payload)
     rentals = get_rental_requests_collection()
     now = datetime.now(timezone.utc).isoformat()
     result = await rentals.find_one_and_update(
         {"_id": ObjectId(request_id), "owner_id": owner_id.strip(), "status": "return_pending"},
-        {"$set": {"status": "completed", "return_owner_confirmed_at": now,
-                  "return_owner_evidence": evidence}},
+        _confirm_evidence({"status": "completed", "return_owner_confirmed_at": now},
+                          "return_owner_evidence", payload),
         return_document=True,
     )
     if not result:
@@ -2658,7 +2738,12 @@ class HandoffIssue(BaseModel):
 
 
 @router.patch("/rental-requests/{request_id}/pickup/undo-owner")
-async def undo_owner_pickup(request_id: str, owner_id: str):
+async def undo_owner_pickup(
+    request_id: str,
+    owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(request_id) or not owner_id.strip():
         raise HTTPException(400, "Valid rental ID and owner_id required.")
     rentals = get_rental_requests_collection()
@@ -2668,7 +2753,8 @@ async def undo_owner_pickup(request_id: str, owner_id: str):
          "status": "pickup_pending"},
         {"$set": {"status": "approved", "pickup_undone_at": now,
                   "handoff_issue_open": False},
-         "$unset": {"pickup_owner_confirmed_at": "", "pickup_owner_evidence": ""}},
+         "$unset": {"pickup_owner_confirmed_at": "", "pickup_owner_evidence": "",
+                    "qr_uploads.pickup_owner": "", "qr_uploads.pickup_borrower": ""}},
         return_document=True,
     )
     if not updated:
@@ -2679,7 +2765,14 @@ async def undo_owner_pickup(request_id: str, owner_id: str):
 
 
 @router.patch("/rental-requests/{request_id}/handoff/report")
-async def report_handoff_issue(request_id: str, role: str, user_id: str, payload: HandoffIssue):
+async def report_handoff_issue(
+    request_id: str,
+    role: str,
+    user_id: str,
+    payload: HandoffIssue,
+    current_user: dict = Depends(require_firebase_user),
+):
+    user_id = require_matching_uid(user_id, current_user)
     if not ObjectId.is_valid(request_id) or role not in ("owner", "borrower") or not user_id.strip():
         raise HTTPException(400, "Invalid rental ID, role, or user ID.")
     rentals = get_rental_requests_collection()
@@ -2711,7 +2804,9 @@ async def report_handoff_issue(request_id: str, role: str, user_id: str, payload
 async def reject_rental_request(
     request_id: str,
     owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(request_id):
         raise HTTPException(
             status_code=400,
@@ -2818,19 +2913,20 @@ async def reject_rental_request(
 # QR HANDOFF PHOTO SESSIONS
 # =========================================================
 
-HandoffStage = Literal[
-    "pickup_owner",
-    "pickup_borrower",
-    "return_borrower",
-    "return_owner",
-]
+HandoffStage = Literal["pickup_owner", "pickup_borrower", "return_borrower", "return_owner"]
 
-STAGE_TO_FIELD = {
-    "pickup_owner": ("owner_id", "pickup_owner_evidence"),
-    "pickup_borrower": ("renter_id", "pickup_borrower_evidence"),
-    "return_borrower": ("renter_id", "return_borrower_evidence"),
-    "return_owner": ("owner_id", "return_owner_evidence"),
+# Each QR photo belongs to the same actor and state as its confirmation.
+QR_STAGES = {
+    "pickup_owner": ("owner_id", "approved", "pickup_owner_evidence"),
+    "pickup_borrower": ("renter_id", "pickup_pending", "pickup_borrower_evidence"),
+    "return_borrower": ("renter_id", "active", "return_borrower_evidence"),
+    "return_owner": ("owner_id", "return_pending", "return_owner_evidence"),
 }
+QR_TOKEN = re.compile(r"([0-9a-f]{24})\.([a-z_]+)\.[A-Za-z0-9_-]{43}")
+JPEG_PREFIX = "data:image/jpeg;base64,"
+MAX_JPEG_BYTES = 768 * 1024
+MAX_JPEG_URL_CHARS = len(JPEG_PREFIX) + 4 * ((MAX_JPEG_BYTES + 2) // 3)
+MAX_QR_REQUEST_BYTES = MAX_JPEG_URL_CHARS + 16 * 1024
 
 
 class CreateQRSessionPayload(BaseModel):
@@ -2838,100 +2934,140 @@ class CreateQRSessionPayload(BaseModel):
     stage: HandoffStage
 
 
+class QRCompletePayload(BaseModel):
+    photo_url: str = Field(max_length=MAX_JPEG_URL_CHARS)
+    condition_notes: Optional[str] = Field(default=None, max_length=1000)
+
+
+def _qr_stage_filter(stage: str, uid: str) -> dict:
+    actor, status, evidence = QR_STAGES[stage]
+    match = {
+        actor: uid,
+        "status": status,
+        f"{evidence}.photo_url": {"$in": [None, ""]},
+        f"{evidence}.photo_urls.0": {"$exists": False},
+    }
+    if stage.startswith("pickup_"):
+        match["handoff_issue_open"] = {"$ne": True}
+    if stage == "pickup_owner":
+        today = date.today().isoformat()
+        match.update({"start_date": {"$lte": today}, "end_date": {"$gte": today}})
+    return match
+
+
+def _qr_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
 @router.post("/rental-requests/{request_id}/qr-session")
-async def create_qr_upload_session(request_id: str, payload: CreateQRSessionPayload):
+async def create_qr_upload_session(
+    request_id: str,
+    payload: CreateQRSessionPayload,
+    response: Response,
+    current_user: dict = Depends(require_firebase_user),
+):
+    uid = require_matching_uid(payload.actor_id, current_user)
     if not ObjectId.is_valid(request_id):
         raise HTTPException(400, "Invalid rental ID.")
 
     rentals = get_rental_requests_collection()
-    rental = await rentals.find_one({"_id": ObjectId(request_id)})
-    if not rental:
-        raise HTTPException(404, "Rental not found.")
-
-    actor_field, _ = STAGE_TO_FIELD[payload.stage]
-    if str(rental.get(actor_field, "")).strip() != payload.actor_id.strip():
+    rental_id = ObjectId(request_id)
+    actor_field, _, _ = QR_STAGES[payload.stage]
+    if not await rentals.find_one({"_id": rental_id, actor_field: uid}, {"_id": 1}):
         raise HTTPException(403, "Not authorized for this handoff photo slot.")
 
-    token = secrets.token_urlsafe(24)
-    now = datetime.now(timezone.utc)
-    expires_at = (now + timedelta(minutes=10)).isoformat()
-
-    session_doc = {
-        "token": token,
-        "rental_id": request_id,
-        "actor_id": payload.actor_id.strip(),
-        "stage": payload.stage,
-        "tool_name": rental.get("tool_name", "Tool"),
-        "status": "pending",  # "pending" | "completed"
-        "photo_url": None,
-        "notes": None,
-        "created_at": now.isoformat(),
-        "expires_at": expires_at,
-    }
-    await db_instance.db["handoff_upload_sessions"].insert_one(session_doc)
+    token = f"{rental_id}.{payload.stage}.{secrets.token_urlsafe(32)}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    session = {"digest": _qr_digest(token), "uid": uid, "expires_at": expires_at, "completed": False}
+    result = await rentals.update_one(
+        {"_id": rental_id, **_qr_stage_filter(payload.stage, uid)},
+        {"$set": {f"qr_uploads.{payload.stage}": session}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(409, "This handoff photo slot is no longer open.")
+    response.headers["Cache-Control"] = "no-store"
     return {"token": token, "expires_at": expires_at}
 
 
-@router.get("/qr-session/{token}")
-async def get_qr_upload_session(token: str):
-    session = await db_instance.db["handoff_upload_sessions"].find_one({"token": token})
-    if not session:
+async def _qr_session(token: str, *, include_evidence: bool = False):
+    match = QR_TOKEN.fullmatch(token)
+    if not match or match[2] not in QR_STAGES:
         raise HTTPException(404, "Upload session not found.")
-
-    if datetime.now(timezone.utc).isoformat() > session["expires_at"] and session["status"] != "completed":
+    stage = match[2]
+    field = f"qr_uploads.{stage}"
+    query = {"_id": ObjectId(match[1]), f"{field}.digest": _qr_digest(token)}
+    projection = {"tool_name": 1, field: 1}
+    if include_evidence:
+        projection[QR_STAGES[stage][2]] = 1
+    rental = await get_rental_requests_collection().find_one(query, projection)
+    if rental is None:
+        raise HTTPException(404, "Upload session not found.")
+    session = rental["qr_uploads"][stage]
+    if session["expires_at"] <= datetime.now(timezone.utc).isoformat():
         raise HTTPException(410, "This QR code has expired. Generate a new one on your computer.")
+    return stage, field, query, rental, session
 
+
+@router.get("/qr-session/{token}")
+async def get_qr_upload_session(token: str, response: Response):
+    stage, _, _, rental, session = await _qr_session(token)
+    response.headers["Cache-Control"] = "no-store"
     return {
-        "rental_id": session["rental_id"],
-        "stage": session["stage"],
-        "tool_name": session["tool_name"],
-        "status": session["status"],
-        "photo_url": session.get("photo_url"),
-        "notes": session.get("notes"),
+        "stage": stage,
+        "tool_name": rental.get("tool_name", "Tool"),
+        "status": "completed" if session["completed"] else "pending",
     }
 
 
-class QRCompletePayload(BaseModel):
-    photo_url: str
-    condition_notes: Optional[str] = None
+def _validate_qr_jpeg(data_url: str) -> None:
+    if not data_url.startswith(JPEG_PREFIX):
+        raise HTTPException(400, "A JPEG condition photo is required.")
+    try:
+        photo = base64.b64decode(data_url[len(JPEG_PREFIX):], validate=True)
+        if len(photo) > MAX_JPEG_BYTES:
+            raise HTTPException(413, "This condition photo is too large.")
+        with Image.open(BytesIO(photo), formats=("JPEG",)) as image:
+            if max(image.size) > 1200:
+                raise HTTPException(413, "Condition photos may be at most 1200 pixels on either side.")
+            image.load()
+    except (binascii.Error, OSError, ValueError, Image.DecompressionBombError):
+        raise HTTPException(400, "The condition photo must contain a valid JPEG image.") from None
 
 
 @router.post("/qr-session/{token}/complete")
-async def complete_qr_upload_session(token: str, payload: QRCompletePayload):
-    sessions = db_instance.db["handoff_upload_sessions"]
-    session = await sessions.find_one({"token": token})
-    if not session:
-        raise HTTPException(404, "Upload session not found.")
-    if session["status"] == "completed":
+async def complete_qr_upload_session(token: str, request: Request, response: Response):
+    stage, field, query, rental, session = await _qr_session(token, include_evidence=True)
+    if session["completed"]:
         raise HTTPException(409, "A photo has already been submitted for this QR session.")
-    if datetime.now(timezone.utc).isoformat() > session["expires_at"]:
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if len(body) + len(chunk) > MAX_QR_REQUEST_BYTES:
+            raise HTTPException(413, "This condition photo is too large.")
+        body.extend(chunk)
+    try:
+        payload = QRCompletePayload.model_validate_json(body)
+    except ValueError:
+        raise HTTPException(422, "A JPEG image and optional condition notes are required.") from None
+    await run_in_threadpool(_validate_qr_jpeg, payload.photo_url)
+
+    now = datetime.now(timezone.utc).isoformat()
+    if session["expires_at"] <= now:
         raise HTTPException(410, "This QR code has expired.")
+    _, _, evidence_field = QR_STAGES[stage]
+    existing = rental.get(evidence_field)
+    evidence = dict(existing) if isinstance(existing, dict) else {}
+    evidence["photo_url"] = payload.photo_url
+    if payload.condition_notes:
+        evidence["notes"] = payload.condition_notes.strip()
 
-    photo = (payload.photo_url or "").strip()
-    notes = (payload.condition_notes or "").strip()
-    if not (photo.startswith("https://") or photo.startswith("data:image/")):
-        raise HTTPException(400, "Valid photo is required.")
-    if len(notes) > 1000:
-        raise HTTPException(400, "Notes are too long.")
-
-    evidence = {"photo_url": photo, "notes": notes}
-    _, evidence_field = STAGE_TO_FIELD[session["stage"]]
-    now_iso = datetime.now(timezone.utc).isoformat()
-
-    await get_rental_requests_collection().update_one(
-        {"_id": ObjectId(session["rental_id"])},
-        {"$set": {evidence_field: evidence, f"{evidence_field}_at": now_iso}},
+    # One conditional Mongo write both consumes the token and records the photo.
+    result = await get_rental_requests_collection().update_one(
+        {**query, **_qr_stage_filter(stage, session["uid"]),
+         f"{field}.completed": False, f"{field}.expires_at": {"$gt": now}},
+        {"$set": {evidence_field: evidence, f"{evidence_field}_at": now, f"{field}.completed": True}},
     )
-
-    await sessions.update_one(
-        {"token": token},
-        {
-            "$set": {
-                "status": "completed",
-                "photo_url": evidence["photo_url"],
-                "notes": evidence["notes"],
-            }
-        },
-    )
-    return {"message": "Condition photo uploaded successfully!", "evidence": evidence}
-
+    if result.matched_count == 0:
+        raise HTTPException(409, "The upload session or rental changed. Generate a new QR code if needed.")
+    response.headers["Cache-Control"] = "no-store"
+    return {"message": "Condition photo uploaded successfully!"}

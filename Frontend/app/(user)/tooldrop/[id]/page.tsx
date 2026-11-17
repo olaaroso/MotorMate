@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -614,7 +615,7 @@ export default function ToolDetailsPage() {
         );
 
         const response =
-          await fetch(
+          await authenticatedFetch(
             `${apiUrl}/api/diy/rental-requests`,
             {
               method: "POST",

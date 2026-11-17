@@ -54,20 +54,25 @@ def send(request_id, body="Could you do 1:00 PM instead?", actor_id=MECHANIC, vi
         routes.send_request_message(
             request_id,
             ServiceRequestMessageCreate(actor_id=actor_id, view=view, body=body),
+            current_user={"uid": actor_id.strip() or MECHANIC},
         )
     )
 
 
 def read_thread(request_id, actor_id=MECHANIC, view="mechanic"):
-    return asyncio.run(routes.get_request_messages(request_id, actor_id, view))
+    return asyncio.run(routes.get_request_messages(
+        request_id, actor_id, view, current_user={"uid": actor_id.strip() or MECHANIC},
+    ))
 
 
 def mark_read(request_id, actor_id=MECHANIC, view="mechanic"):
-    return asyncio.run(routes.mark_request_messages_read(request_id, actor_id, view))
+    return asyncio.run(routes.mark_request_messages_read(
+        request_id, actor_id, view, current_user={"uid": actor_id.strip() or MECHANIC},
+    ))
 
 
 def summary(actor_id=MECHANIC, view="mechanic"):
-    return asyncio.run(routes.get_message_summary(actor_id, view))["results"]
+    return asyncio.run(routes.get_message_summary(actor_id, view, current_user={"uid": actor_id}))["results"]
 
 
 def error_from(action, *args, **kwargs):
@@ -461,9 +466,9 @@ def test_customer_message_notifies_the_mechanic(db):
     send(request_id, "Can I drop it off early?", actor_id=CUSTOMER, view="customer")
 
     [alert] = notifications_for(db, MECHANIC)
-    assert alert["title"] == "New Message"
+    assert alert["title"] == "1 unread message from Customer One"
     assert alert["message"] == (
-        "Customer One sent you a message about their Oil Change request "
+        "Customer One sent you a message about your Oil Change request "
         "for Fri, Nov 20 at 9:00 AM."
     )
     assert alert["destination"] == f"/mechanic/requests?request={request_id}"
@@ -477,7 +482,7 @@ def test_mechanic_message_notifies_the_customer(db):
     send(request_id)
 
     [alert] = notifications_for(db, CUSTOMER)
-    assert alert["title"] == "New Message from Northside Auto"
+    assert alert["title"] == "1 unread message from Northside Auto"
     assert alert["message"] == (
         "Northside Auto sent you a message about your Oil Change request "
         "for Fri, Nov 20 at 9:00 AM."

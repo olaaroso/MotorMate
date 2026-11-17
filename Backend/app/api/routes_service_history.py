@@ -2,10 +2,11 @@ from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 
 router = APIRouter(
     prefix="/api/service-history",
@@ -125,17 +126,21 @@ class ServiceRecordUpdate(BaseModel):
 
 
 @router.post("/")
-async def create_service_record(payload: ServiceRecordCreate):
+async def create_service_record(
+    payload: ServiceRecordCreate,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(payload.owner_id, current_user)
     await verify_vehicle_owner(
         payload.vehicle_id,
-        payload.owner_id,
+        owner_id,
     )
 
     now = datetime.now(timezone.utc).isoformat()
 
     document = {
         "vehicle_id": payload.vehicle_id,
-        "owner_id": payload.owner_id,
+        "owner_id": owner_id,
 
         "record_type": payload.record_type,
         "title": payload.title.strip(),
@@ -176,7 +181,9 @@ async def create_service_record(payload: ServiceRecordCreate):
 async def get_vehicle_service_history(
     vehicle_id: str,
     owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(owner_id, current_user)
     await verify_vehicle_owner(vehicle_id, owner_id)
 
     cursor = (
@@ -210,7 +217,9 @@ async def get_vehicle_service_history(
 async def update_service_record(
     record_id: str,
     payload: ServiceRecordUpdate,
+    current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(payload.owner_id, current_user)
     record_object_id = parse_object_id(
         record_id,
         "service record id",
@@ -219,7 +228,7 @@ async def update_service_record(
     existing = await service_history_collection().find_one(
         {
             "_id": record_object_id,
-            "owner_id": payload.owner_id,
+            "owner_id": owner_id,
         }
     )
 
@@ -265,7 +274,7 @@ async def update_service_record(
     await service_history_collection().update_one(
         {
             "_id": record_object_id,
-            "owner_id": payload.owner_id,
+            "owner_id": owner_id,
         },
         {
             "$set": updates,
@@ -276,7 +285,7 @@ async def update_service_record(
         await service_history_collection().find_one(
             {
                 "_id": record_object_id,
-                "owner_id": payload.owner_id,
+                "owner_id": owner_id,
             }
         )
     )
@@ -293,7 +302,9 @@ async def update_service_record(
 async def delete_service_record(
     record_id: str,
     owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(owner_id, current_user)
     record_object_id = parse_object_id(
         record_id,
         "service record id",

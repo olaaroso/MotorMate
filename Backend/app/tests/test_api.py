@@ -3,6 +3,7 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.core.database import db_instance, connect_to_mongo, close_mongo_connection
+from app.core.firebase_auth import require_firebase_user
 from app.services.vin_service import vin_decoder
 
 TEST_DATABASE_NAME = "test_car_repair_db"
@@ -35,8 +36,9 @@ async def test_health_endpoint_returns_service_status():
 
 
 @pytest.mark.asyncio
-async def test_invalid_vin_fails_fast():
+async def test_invalid_vin_fails_fast(monkeypatch):
     payload = {"vin": "INVALID", "owner_id": "owner-123"}
+    monkeypatch.setitem(app.dependency_overrides, require_firebase_user, lambda: {"uid": "owner-123"})
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -81,7 +83,7 @@ async def test_mechanic_route_requires_authentication():
 
 
 @pytest.mark.asyncio
-async def test_register_and_lookup_vin_success(mocker):
+async def test_register_and_lookup_vin_success(mocker, monkeypatch):
     mock_vehicle_data = {
         "Make": "HONDA",
         "Model": "ACCORD",
@@ -92,6 +94,7 @@ async def test_register_and_lookup_vin_success(mocker):
 
     test_vin = "1HGCM82633A000000"
     test_owner_id = "64f1a2b3c9e78a0012345678"
+    monkeypatch.setitem(app.dependency_overrides, require_firebase_user, lambda: {"uid": test_owner_id})
     payload = {"vin": test_vin, "owner_id": test_owner_id}
 
     transport = ASGITransport(app=app)

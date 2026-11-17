@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -99,7 +100,7 @@ export default function DashboardPage() {
       try {
         setLoading(true);
 
-        const response = await fetch(
+        const response = await authenticatedFetch(
             `${apiUrl}/api/vin/vehicles/${user.uid}`
         );
 

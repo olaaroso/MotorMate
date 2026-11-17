@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
@@ -99,8 +100,8 @@ export default function ToolAnalyticsPage() {
       setLoading(true);
       try {
         const [t, r] = await Promise.all([
-          fetch(`${API}/api/diy/listings/owner/${encodeURIComponent(user.uid)}`, { cache: "no-store" }),
-          fetch(`${API}/api/diy/rental-requests/owner/${encodeURIComponent(user.uid)}`, { cache: "no-store" }),
+          authenticatedFetch(`${API}/api/diy/listings/owner/${encodeURIComponent(user.uid)}`, { cache: "no-store" }),
+          authenticatedFetch(`${API}/api/diy/rental-requests/owner/${encodeURIComponent(user.uid)}`, { cache: "no-store" }),
         ]);
         if (!t.ok || !r.ok) {
           const failing = t.ok ? r : t;

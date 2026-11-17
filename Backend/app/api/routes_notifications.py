@@ -2,9 +2,10 @@
 import re
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from bson import ObjectId
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 
 router = APIRouter()
 
@@ -25,13 +26,13 @@ REQUEST_LINK_DESTINATIONS = (
     "/appointments",
 )
 REQUEST_LINK_QUERY = re.compile(r"request=([0-9a-f]{24})")
+RENTAL_LINK_DESTINATIONS = ("/myTools", "/rentals")
+RENTAL_LINK_QUERY = re.compile(r"rental=([0-9a-f]{24})")
 
 
 def safe_destination(destination) -> str | None:
     """
-    Returns an allowed in-app path, keeping the query only when it is exactly
-    request=<ObjectId> on a page that supports it. A malformed query falls
-    back to the bare allowed path; anything else returns None.
+    Keep a valid request or rental ID on the page that handles its thread.
     """
     if not isinstance(destination, str):
         return None
@@ -42,8 +43,8 @@ def safe_destination(destination) -> str | None:
     if not has_query:
         return path
 
-    link = REQUEST_LINK_QUERY.fullmatch(query)
-    if path in REQUEST_LINK_DESTINATIONS and link and ObjectId.is_valid(link.group(1)):
+    if (path in REQUEST_LINK_DESTINATIONS and REQUEST_LINK_QUERY.fullmatch(query)
+            or path in RENTAL_LINK_DESTINATIONS and RENTAL_LINK_QUERY.fullmatch(query)):
         return destination
     return path
 
@@ -115,6 +116,7 @@ def require_user_id(user_id: str) -> str:
 async def get_user_notifications(
     user_id: str,
     include_cleared: bool = Query(default=False),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """
     Fetch a user's notifications, newest first.
@@ -122,6 +124,7 @@ async def get_user_notifications(
     Cleared notifications are hidden from the normal view but are never
     deleted; pass include_cleared=true to read the full history.
     """
+    user_id = require_matching_uid(user_id, current_user)
     collection = get_notifications_collection()
 
     query = {"user_id": user_id}
@@ -138,8 +141,12 @@ async def get_user_notifications(
 
 
 @router.patch("/user/{user_id}/clear-all")
-async def clear_all_notifications(user_id: str):
+async def clear_all_notifications(
+    user_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
     """Clear every visible notification for a user, keeping them in history."""
+    user_id = require_matching_uid(user_id, current_user)
     user_id = require_user_id(user_id)
     collection = get_notifications_collection()
 
@@ -160,8 +167,12 @@ async def clear_all_notifications(user_id: str):
 
 
 @router.patch("/user/{user_id}/read-all")
-async def mark_all_notifications_as_read(user_id: str):
+async def mark_all_notifications_as_read(
+    user_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
     """Mark all unread notifications for a user as read."""
+    user_id = require_matching_uid(user_id, current_user)
     collection = get_notifications_collection()
 
     result = await collection.update_many(
@@ -184,8 +195,10 @@ async def mark_all_notifications_as_read(user_id: str):
 async def mark_notification_as_read(
     notification_id: str,
     user_id: str = Query(..., min_length=1),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """Mark one of the user's notifications as read."""
+    user_id = require_matching_uid(user_id, current_user)
     notification_object_id = parse_notification_id(notification_id)
     user_id = require_user_id(user_id)
     collection = get_notifications_collection()
@@ -211,8 +224,10 @@ async def mark_notification_as_read(
 async def clear_notification(
     notification_id: str,
     user_id: str = Query(..., min_length=1),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """Hide one notification from the normal view, keeping it in history."""
+    user_id = require_matching_uid(user_id, current_user)
     notification_object_id = parse_notification_id(notification_id)
     user_id = require_user_id(user_id)
     collection = get_notifications_collection()

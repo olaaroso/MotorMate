@@ -1,3 +1,4 @@
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 export const MAX_MESSAGE_LENGTH = 1000;
@@ -33,7 +34,7 @@ export async function fetchRequestThread(
     role: "owner" | "borrower"
 ): Promise<RequestThread> {
     const params = new URLSearchParams({ actor_id: actorId, role });
-    const res = await fetch(`${apiUrl}/api/diy/rental-messages/${rentalId}?${params}`);
+    const res = await authenticatedFetch(`${apiUrl}/api/diy/rental-messages/${rentalId}?${params}`);
 
     if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -49,7 +50,7 @@ export async function sendRequestMessage(
     body: string
 ): Promise<RentalMessage> {
     const params = new URLSearchParams({ actor_id: actorId, role });
-    const res = await fetch(`${apiUrl}/api/diy/rental-messages/${rentalId}?${params}`, {
+    const res = await authenticatedFetch(`${apiUrl}/api/diy/rental-messages/${rentalId}?${params}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body }),
@@ -68,7 +69,7 @@ export async function markRequestThreadRead(
     role: "owner" | "borrower"
 ): Promise<void> {
     const params = new URLSearchParams({ actor_id: actorId, role });
-    await fetch(`${apiUrl}/api/diy/rental-messages/${rentalId}/read?${params}`, {
+    await authenticatedFetch(`${apiUrl}/api/diy/rental-messages/${rentalId}/read?${params}`, {
         method: "PATCH",
     });
 }

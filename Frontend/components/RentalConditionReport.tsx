@@ -38,6 +38,13 @@ type Stage = {
     allowedRole: "owner" | "borrower";
 };
 
+const stageStatus: Record<HandoffStage, string> = {
+    pickup_owner: "approved",
+    pickup_borrower: "pickup_pending",
+    return_borrower: "active",
+    return_owner: "return_pending",
+};
+
 function photos(evidence?: ConditionEvidence): string[] {
     if (!evidence) return [];
     const list = Array.isArray(evidence.photo_urls) ? evidence.photo_urls : [];
@@ -50,17 +57,24 @@ function EvidenceStage({
                            actorId,
                            userRole,
                            onUpdate,
+                           status,
+                           pickupBlocked,
                        }: {
     stage: Stage;
     rentalId: string;
     actorId?: string;
     userRole?: "owner" | "borrower";
     onUpdate?: () => void;
+    status: string;
+    pickupBlocked?: boolean;
 }) {
     const urls = photos(stage.evidence);
     const note = stage.evidence?.notes || stage.evidence?.condition_notes;
     const isMySlot = actorId && userRole === stage.allowedRole;
-    const canUpload = Boolean(isMySlot && !stage.submittedAt && urls.length === 0);
+    const canUpload = Boolean(
+        isMySlot && status === stageStatus[stage.stageKey] && !stage.submittedAt && urls.length === 0 &&
+        !(pickupBlocked && stage.stageKey.startsWith("pickup_"))
+    );
 
     return (
         <section className="rounded-xl border border-slate-200 bg-white p-3 sm:p-4">
@@ -211,6 +225,8 @@ export default function RentalConditionReport({
                                         actorId={actorId}
                                         userRole={role}
                                         onUpdate={onUpdate}
+                                        status={rental.status}
+                                        pickupBlocked={rental.handoff_issue_open}
                                     />
                                 ))}
                             </div>
@@ -227,6 +243,7 @@ export default function RentalConditionReport({
                                         actorId={actorId}
                                         userRole={role}
                                         onUpdate={onUpdate}
+                                        status={rental.status}
                                     />
                                 ))}
                             </div>

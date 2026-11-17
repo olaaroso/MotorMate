@@ -1,0 +1,12 @@
+.env
+.env.*
+.venv*
+env
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+.DS_Store
+.git
+app/tests
+mlruns
+mlflow*.db

@@ -2,11 +2,12 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from bson import ObjectId
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.routes_diy import get_rental_requests_collection
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 from app.services.notifications import create_notification
 
 router = APIRouter(prefix="/api/diy/rental-messages", tags=["Rental Messages"])
@@ -75,7 +76,9 @@ async def get_rental_thread(
         rental_id: str,
         actor_id: str = Query(..., min_length=1),
         role: RentalRole = Query(...),
+        current_user: dict = Depends(require_firebase_user),
 ):
+    actor_id = require_matching_uid(actor_id, current_user)
     rental = await require_rental_participant(rental_id, actor_id, role)
     messages_collection = get_messages_collection()
 
@@ -109,7 +112,9 @@ async def send_rental_message(
         actor_id: str = Query(..., min_length=1),
         role: RentalRole = Query(...),
         payload: MessagePayload = Body(...),
+        current_user: dict = Depends(require_firebase_user),
 ):
+    actor_id = require_matching_uid(actor_id, current_user)
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
@@ -195,7 +200,9 @@ async def mark_rental_thread_read(
         rental_id: str,
         actor_id: str = Query(..., min_length=1),
         role: RentalRole = Query(...),
+        current_user: dict = Depends(require_firebase_user),
 ):
+    actor_id = require_matching_uid(actor_id, current_user)
     await require_rental_participant(rental_id, actor_id, role)
     messages_collection = get_messages_collection()
 

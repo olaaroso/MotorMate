@@ -2,10 +2,11 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid, optional_firebase_user
 from app.services.ml_service import predict_maintenance
 from app.services.vin_service import vin_decoder
 
@@ -78,8 +79,8 @@ async def create_vehicle_prediction(
         "recent_major_service": recent_major_service,
         "updated_at": generated_at,
     }
-    await vehicles_collection.update_one(
-        {"_id": vehicle["_id"]},
+    result = await vehicles_collection.update_one(
+        {"_id": vehicle["_id"], "owner_id": vehicle["owner_id"]},
         {
             "$set": {
                 "maintenance_model_profile": model_profile,
@@ -87,6 +88,8 @@ async def create_vehicle_prediction(
             }
         },
     )
+    if not result.matched_count:
+        raise HTTPException(404, "Vehicle not found.")
     return {
         "vehicle_id": vehicle_id,
         "vehicle": {
@@ -103,7 +106,12 @@ async def create_vehicle_prediction(
 
 
 @router.post("/")
-async def get_prediction(request: PredictionRequest):
+async def get_prediction(
+    request: PredictionRequest,
+    current_user: dict | None = Depends(optional_firebase_user),
+):
+    owner_id = (require_matching_uid(request.owner_id, current_user)
+                if request.owner_id is not None else None)
     vin = request.vin.upper().strip()
     if len(vin) != 17:
         raise HTTPException(status_code=400, detail="Invalid VIN length")
@@ -125,11 +133,11 @@ async def get_prediction(request: PredictionRequest):
     try:
         vehicles_collection = get_vehicles_collection()
         vehicle_query = {"vin": vin}
-        if request.owner_id:
-            vehicle_query["owner_id"] = request.owner_id.strip()
+        if owner_id is not None:
+            vehicle_query["owner_id"] = owner_id
         vehicle = (
             await vehicles_collection.find_one(vehicle_query)
-            if vehicles_collection is not None and request.owner_id
+            if vehicles_collection is not None and owner_id is not None
             else None
         )
         if vehicle:
@@ -183,7 +191,9 @@ async def get_prediction(request: PredictionRequest):
 async def predict_registered_vehicle(
         vehicle_id: str,
         request: VehiclePredictionRequest,
+        current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(request.owner_id, current_user)
     if not ObjectId.is_valid(vehicle_id):
         raise HTTPException(status_code=400, detail="Invalid vehicle ID.")
     vehicles_collection = get_vehicles_collection()
@@ -191,7 +201,7 @@ async def predict_registered_vehicle(
         raise HTTPException(status_code=503, detail="Database is not connected.")
 
     vehicle = await vehicles_collection.find_one(
-        {"_id": ObjectId(vehicle_id), "owner_id": request.owner_id.strip()}
+        {"_id": ObjectId(vehicle_id), "owner_id": owner_id}
     )
     if vehicle is None:
         raise HTTPException(status_code=404, detail="Vehicle not found.")
@@ -219,14 +229,19 @@ async def predict_registered_vehicle(
 
 
 @router.get("/vehicle/{vehicle_id}")
-async def get_vehicle_prediction(vehicle_id: str, owner_id: str):
+async def get_vehicle_prediction(
+    vehicle_id: str,
+    owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(vehicle_id):
         raise HTTPException(status_code=400, detail="Invalid vehicle ID.")
     if db_instance.db is None:
         raise HTTPException(status_code=503, detail="Database is not connected.")
 
     vehicle = await db_instance.db["vehicles"].find_one(
-        {"_id": ObjectId(vehicle_id), "owner_id": owner_id.strip()}
+        {"_id": ObjectId(vehicle_id), "owner_id": owner_id}
     )
     if vehicle is None:
         raise HTTPException(status_code=404, detail="Vehicle not found.")

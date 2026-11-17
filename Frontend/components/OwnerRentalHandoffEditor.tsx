@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useState } from "react";
 import { auth, db } from "@/lib/firebase";
 import { doc, getDoc } from "firebase/firestore";
@@ -30,8 +31,8 @@ export default function OwnerRentalHandoffEditor({
     setLoading(true); setError("");
     try {
       const [rentalResponse, listingResponse, profileSnapshot] = await Promise.all([
-        fetch(`${API}/api/diy/handoff/rentals/${encodeURIComponent(rentalId)}`, { cache: "no-store" }),
-        fetch(`${API}/api/diy/handoff/listings/${encodeURIComponent(listingId)}?owner_id=${encodeURIComponent(user.uid)}`, { cache: "no-store" }),
+        authenticatedFetch(`${API}/api/diy/handoff/rentals/${encodeURIComponent(rentalId)}`, { cache: "no-store" }),
+        authenticatedFetch(`${API}/api/diy/handoff/listings/${encodeURIComponent(listingId)}?owner_id=${encodeURIComponent(user.uid)}`, { cache: "no-store" }),
         getDoc(doc(db, "users", user.uid)),
       ]);
       const rental = await rentalResponse.json().catch(() => ({}));
@@ -63,7 +64,7 @@ export default function OwnerRentalHandoffEditor({
     if (!details.pickup_address.trim()) { setError("Enter a pickup address for this order."); return; }
     setSaving(true); setError(""); setSuccess("");
     try {
-      const response = await fetch(`${API}/api/diy/handoff/rentals/${encodeURIComponent(rentalId)}?owner_id=${encodeURIComponent(user.uid)}`, {
+      const response = await authenticatedFetch(`${API}/api/diy/handoff/rentals/${encodeURIComponent(rentalId)}?owner_id=${encodeURIComponent(user.uid)}`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(details),
       });

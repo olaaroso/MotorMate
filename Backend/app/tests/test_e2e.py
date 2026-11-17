@@ -5,6 +5,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.core.database import close_mongo_connection, connect_to_mongo, db_instance
+from app.core.firebase_auth import require_firebase_user
 from app.main import app
 
 TEST_DATABASE_NAME = os.getenv("MONGOODB_URL", "test_db")
@@ -24,8 +25,10 @@ async def setup_and_teardown_db():
 
 
 @pytest.mark.asyncio
-async def test_full_user_journey_live_api():
+async def test_full_user_journey_live_api(monkeypatch):
     """Exercise the full mechanic->VIN->prediction->matching journey against the live app."""
+    identity = {"uid": "mechanic-e2e"}
+    monkeypatch.setitem(app.dependency_overrides, require_firebase_user, lambda: identity.copy())
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         auth_res = await ac.post(
@@ -41,6 +44,7 @@ async def test_full_user_journey_live_api():
         token = auth_res.json()["access_token"]
 
         mechanic_payload = {
+            "owner_id": identity["uid"],
             "name": "Jane Doe",
             "email": "jane@capstoneauto.com",
             "role": "mechanic",
@@ -60,6 +64,7 @@ async def test_full_user_journey_live_api():
             "vin": "1G1RC6E42CU111111",
             "owner_id": "student_999",
         }
+        identity["uid"] = vin_payload["owner_id"]
         vin_res = await ac.post("/api/vin/register", json=vin_payload)
         if vin_res.status_code != 200:
             print(f"\nNHTSA API Error: {vin_res.json()}")

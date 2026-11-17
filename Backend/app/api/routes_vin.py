@@ -1,10 +1,11 @@
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid, firebase_uid
 from app.services.vin_service import vin_decoder
 
 
@@ -38,6 +39,9 @@ class VehicleUpdateRequest(BaseModel):
     make: Optional[str] = None
     model: Optional[str] = None
     year: Optional[int] = None
+    climate_condition: Optional[str] = Field(None, max_length=80)
+    primary_usage: Optional[str] = Field(None, max_length=80)
+    recent_major_service: Optional[str] = Field(None, max_length=80)
 
 
 def get_vehicles_collection():
@@ -57,9 +61,10 @@ def get_vehicles_collection():
 @router.post("/register")
 async def register_and_lookup_vin(
         request: VinRegistrationRequest,
+        current_user: dict = Depends(require_firebase_user),
 ):
     vin = request.vin.upper().strip()
-    owner_id = request.owner_id.strip()
+    owner_id = require_matching_uid(request.owner_id, current_user)
 
     if not owner_id:
         raise HTTPException(
@@ -152,8 +157,9 @@ async def register_and_lookup_vin(
 @router.post("/manual")
 async def register_manual_vehicle(
         request: ManualVehicleRequest,
+        current_user: dict = Depends(require_firebase_user),
 ):
-    owner_id = request.owner_id.strip()
+    owner_id = require_matching_uid(request.owner_id, current_user)
     make = request.make.strip().title()
     model = request.model.strip().title()
 
@@ -219,8 +225,11 @@ async def register_manual_vehicle(
 # =========================================================
 
 @router.get("/vehicles/{owner_id}")
-async def get_user_vehicles(owner_id: str):
-    owner_id = owner_id.strip()
+async def get_user_vehicles(
+    owner_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    owner_id = require_matching_uid(owner_id, current_user)
 
     if not owner_id:
         raise HTTPException(
@@ -266,6 +275,7 @@ async def get_user_vehicles(owner_id: str):
 async def update_vehicle(
         vehicle_id: str,
         request: VehicleUpdateRequest,
+        current_user: dict = Depends(require_firebase_user),
 ):
     if not ObjectId.is_valid(vehicle_id):
         raise HTTPException(
@@ -290,9 +300,9 @@ async def update_vehicle(
             detail="No valid fields provided for update.",
         )
 
-    query = {"_id": ObjectId(vehicle_id)}
-    if request.owner_id:
-        query["owner_id"] = request.owner_id.strip()
+    owner_id = (require_matching_uid(request.owner_id, current_user)
+                if request.owner_id is not None else firebase_uid(current_user))
+    query = {"_id": ObjectId(vehicle_id), "owner_id": owner_id}
 
     try:
         vehicles_collection = get_vehicles_collection()
@@ -308,9 +318,7 @@ async def update_vehicle(
                 detail="Vehicle not found or owner mismatch.",
             )
 
-        updated_vehicle = await vehicles_collection.find_one(
-            {"_id": ObjectId(vehicle_id)}
-        )
+        updated_vehicle = await vehicles_collection.find_one(query)
         if updated_vehicle:
             updated_vehicle["_id"] = str(updated_vehicle["_id"])
 
@@ -337,7 +345,9 @@ async def update_vehicle(
 async def delete_vehicle(
         vehicle_id: str,
         owner_id: str,
+        current_user: dict = Depends(require_firebase_user),
 ):
+    owner_id = require_matching_uid(owner_id, current_user)
     if not ObjectId.is_valid(vehicle_id):
         raise HTTPException(
             status_code=400,

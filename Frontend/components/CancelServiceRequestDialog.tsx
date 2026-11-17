@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useState } from "react";
 import { Ban, Loader2, X } from "lucide-react";
 
@@ -48,7 +49,7 @@ export default function CancelServiceRequestDialog<T>({
       setError("");
 
       const trimmedReason = reason.trim();
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/service-requests/${encodeURIComponent(requestId)}/cancel`,
         {
           method: "PATCH",

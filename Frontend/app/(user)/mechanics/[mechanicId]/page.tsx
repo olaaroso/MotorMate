@@ -2,6 +2,7 @@
 
 // MotorMate mechanic detail: clean route/load version.
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
@@ -337,7 +338,7 @@ export default function MechanicDetailPage() {
       try {
         const [snapshot, vehiclesResponse] = await Promise.all([
           getDoc(doc(db, "users", user.uid)).catch(() => null),
-          fetch(`${apiUrl}/api/vin/vehicles/${user.uid}`),
+          authenticatedFetch(`${apiUrl}/api/vin/vehicles/${user.uid}`),
         ]);
 
         const userData = snapshot?.exists() ? snapshot.data() : {};
@@ -412,7 +413,7 @@ export default function MechanicDetailPage() {
 
     try {
       setSubmitting(true);
-      const response = await fetch(`${apiUrl}/api/service-requests`, {
+      const response = await authenticatedFetch(`${apiUrl}/api/service-requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

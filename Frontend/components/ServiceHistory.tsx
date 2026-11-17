@@ -1,3 +1,4 @@
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import {
   useCallback,
   useEffect,
@@ -113,7 +114,7 @@ async function fetchServiceRecords(
   vehicleId: string,
   ownerId: string
 ): Promise<ServiceRecord[]> {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${apiUrl}/api/service-history/vehicle/${vehicleId}?owner_id=${encodeURIComponent(
       ownerId
     )}`
@@ -348,7 +349,7 @@ export default function ServiceHistory({
         ? `${apiUrl}/api/service-history/${editingRecord._id}`
         : `${apiUrl}/api/service-history/`;
 
-      const response = await fetch(endpoint, {
+      const response = await authenticatedFetch(endpoint, {
         method: editing ? "PATCH" : "POST",
         headers: {
           "Content-Type": "application/json",
@@ -409,7 +410,7 @@ export default function ServiceHistory({
       setMileageUpdateLoading(true);
       setMileageUpdateError("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/vin/vehicles/${vehicleId}`,
         {
           method: "PATCH",
@@ -457,7 +458,7 @@ export default function ServiceHistory({
     try {
       setError("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/service-history/${record._id}?owner_id=${encodeURIComponent(
           resolvedOwnerId
         )}`,

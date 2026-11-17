@@ -112,7 +112,7 @@ def titles(results):
 
 def test_normal_view_hides_cleared_notifications(notifications):
     results = asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=False)
+        routes_notifications.get_user_notifications("user-1", include_cleared=False, current_user={"uid": "user-1"})
     )
 
     assert titles(results) == ["New", "Old"]
@@ -120,7 +120,7 @@ def test_normal_view_hides_cleared_notifications(notifications):
 
 def test_history_includes_cleared_notifications(notifications):
     results = asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=True)
+        routes_notifications.get_user_notifications("user-1", include_cleared=True, current_user={"uid": "user-1"})
     )
 
     assert titles(results) == ["New", "Old", "Previously cleared"]
@@ -131,16 +131,16 @@ def test_clear_notification_keeps_it_in_history(notifications):
     target = notifications.documents[0]
 
     cleared = asyncio.run(
-        routes_notifications.clear_notification(str(target["_id"]), user_id="user-1")
+        routes_notifications.clear_notification(str(target["_id"]), user_id="user-1", current_user={"uid": 'user-1'})
     )
 
     assert cleared["is_read"] is True
     assert cleared["cleared_at"]
     visible = asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=False)
+        routes_notifications.get_user_notifications("user-1", include_cleared=False, current_user={"uid": "user-1"})
     )
     history = asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=True)
+        routes_notifications.get_user_notifications("user-1", include_cleared=True, current_user={"uid": "user-1"})
     )
     assert titles(visible) == ["New"]
     assert "Old" in titles(history)
@@ -151,7 +151,7 @@ def test_clearing_twice_keeps_original_cleared_time(notifications):
     target = notifications.documents[2]
 
     result = asyncio.run(
-        routes_notifications.clear_notification(str(target["_id"]), user_id="user-1")
+        routes_notifications.clear_notification(str(target["_id"]), user_id="user-1", current_user={"uid": 'user-1'})
     )
 
     assert result["cleared_at"] == "2026-10-31T10:00:00+00:00"
@@ -165,7 +165,7 @@ def test_user_cannot_clear_or_read_another_users_notification(notifications):
         routes_notifications.mark_notification_as_read,
     ):
         with pytest.raises(HTTPException) as error:
-            asyncio.run(action(str(other["_id"]), user_id="user-1"))
+            asyncio.run(action(str(other["_id"]), user_id="user-1", current_user={"uid": "user-1"}))
         assert error.value.status_code == 404
 
     assert other["is_read"] is False
@@ -173,17 +173,17 @@ def test_user_cannot_clear_or_read_another_users_notification(notifications):
 
 
 def test_clear_all_only_affects_that_users_visible_notifications(notifications):
-    result = asyncio.run(routes_notifications.clear_all_notifications("user-1"))
+    result = asyncio.run(routes_notifications.clear_all_notifications("user-1", current_user={"uid": "user-1"}))
 
     assert result["modified_count"] == 2
     assert asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=False)
+        routes_notifications.get_user_notifications("user-1", include_cleared=False, current_user={"uid": "user-1"})
     ) == []
     assert len(asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=True)
+        routes_notifications.get_user_notifications("user-1", include_cleared=True, current_user={"uid": "user-1"})
     )) == 3
     assert titles(asyncio.run(
-        routes_notifications.get_user_notifications("user-2", include_cleared=False)
+        routes_notifications.get_user_notifications("user-2", include_cleared=False, current_user={"uid": "user-2"})
     )) == ["Someone else"]
 
 
@@ -204,7 +204,7 @@ def test_request_deep_links_survive_serialization(monkeypatch, destination):
     monkeypatch.setattr(routes_notifications.db_instance, "db", {"notifications": collection})
 
     [result] = asyncio.run(
-        routes_notifications.get_user_notifications("user-1", include_cleared=False)
+        routes_notifications.get_user_notifications("user-1", include_cleared=False, current_user={"uid": "user-1"})
     )
 
     assert result["destination"] == destination

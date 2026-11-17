@@ -89,7 +89,7 @@ def stored_request(db, status="pending", **extra):
 
 
 def shared_history(request_id, mechanic_id="mechanic-1"):
-    return asyncio.run(routes.get_shared_service_history(request_id, mechanic_id))
+    return asyncio.run(routes.get_shared_service_history(request_id, mechanic_id, current_user={"uid": mechanic_id}))
 
 
 def blocked(request_id, mechanic_id="mechanic-1"):
@@ -174,7 +174,7 @@ def submit(db, share=None):
     }
     if share is not None:
         payload["share_service_history"] = share
-    return asyncio.run(routes.create_service_request(ServiceRequestCreate(**payload)))
+    return asyncio.run(routes.create_service_request(ServiceRequestCreate(**payload), current_user={"uid": payload["customer_id"]}))
 
 
 @pytest.mark.parametrize(("share", "stored"), [(True, True), (False, False), (None, False)])
@@ -190,7 +190,7 @@ def test_mechanic_list_omits_customer_and_vehicle_ids(db):
     stored_request(db, share_service_history=True)
     stored_request(db)
 
-    results = asyncio.run(routes.get_mechanic_service_requests("mechanic-1", None))["results"]
+    results = asyncio.run(routes.get_mechanic_service_requests("mechanic-1", None, current_user={"uid": "mechanic-1"}))["results"]
 
     for item in results:
         assert "customer_id" not in item

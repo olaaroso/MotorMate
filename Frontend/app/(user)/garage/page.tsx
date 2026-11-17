@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import {
   useCallback,
   useEffect,
@@ -133,7 +134,7 @@ export default function GaragePage() {
       try {
         setGarageLoading(true);
 
-        const response = await fetch(
+        const response = await authenticatedFetch(
           `${apiUrl}/api/vin/vehicles/${user.uid}`
         );
 
@@ -250,7 +251,7 @@ export default function GaragePage() {
         };
       }
 
-      const response = await fetch(endpoint, {
+      const response = await authenticatedFetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -1,20 +1,8 @@
-# TODO: Organize the requirements.txt file into sections based on functionality or purpose. This will make it easier to manage dependencies and understand their role in the project. For example, group dependencies related to web frameworks, database connectors, testing tools, and machine learning libraries separately.
-# TODO: Ensure that all dependencies can be merged into a single requirements.txt file without conflicts. This may involve checking for version compatibility and resolving any issues that arise from conflicting dependencies.
+-r requirements-runtime.txt
 
-fastapi
-uvicorn[standard]
-motor
-pydantic
-pydantic-settings
-python-dotenv
-requests
+# Tests and model training/export
 pytest
 pytest-asyncio
 pytest-mock
-httpx
-email-validator
-
-# Machine Learning Dependencies
-torch
-numpy
-mlflow
+torch==2.14.0
+mlflow==3.16.1

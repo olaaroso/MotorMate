@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -92,7 +93,7 @@ const FILTERS: Array<{ value: RequestFilter; label: string }> = [
 ];
 
 async function fetchCustomerRequests(customerId: string) {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${apiUrl}/api/service-requests/customer/${encodeURIComponent(customerId)}`
   );
   const data = (await response.json().catch(() => ({}))) as RequestsResponse;
@@ -397,7 +398,7 @@ function AppointmentsContent() {
         actor_id: customerId,
         view: "customer",
       });
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/service-requests/${encodeURIComponent(request.id)}?${params.toString()}`,
         { method: "DELETE" }
       );

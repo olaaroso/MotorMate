@@ -146,7 +146,8 @@ def test_register_saves_normalized_estimates(mechanics):
                     {"name": "oil change", "estimated_price": 59.99, "estimated_duration_minutes": 30},
                     {"name": "Brake Pad Replacement", "estimated_duration_minutes": 90},
                 ]
-            )
+            ),
+            current_user={"uid": "mechanic-1"},
         )
     )
 
@@ -160,7 +161,7 @@ def test_register_without_estimates_keeps_saved_estimates(mechanics):
     saved = [{"name": "Oil Change", "estimated_price": 50.0, "estimated_duration_minutes": 30}]
     mechanics.documents.append({"_id": ObjectId(), "owner_id": "mechanic-1", "service_estimates": saved})
 
-    result = asyncio.run(routes_mechanic.register_mechanic(shop_profile()))
+    result = asyncio.run(routes_mechanic.register_mechanic(shop_profile(), current_user={"uid": "mechanic-1"}))
 
     assert result["profile"]["service_estimates"] == saved
 
@@ -238,7 +239,8 @@ def submit(db, service, start):
                 customer_name="Jason Martinez",
                 vehicle_id=db["vehicle_id"],
                 service_requested=service,
-            )
+            ),
+            current_user={"uid": 'customer-1'},
         )
     )
 
@@ -248,6 +250,7 @@ def accept(request_id):
         routes.update_service_request_status(
             str(request_id),
             ServiceRequestStatusUpdate(mechanic_id="mechanic-1", status="accepted"),
+            current_user={"uid": 'mechanic-1'},
         )
     )
 

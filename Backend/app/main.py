@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api import (
     routes_auth,
@@ -19,7 +20,9 @@ from app.api import (
     routes_vin,
     routes_rental_messages,
 )
-from app.core.database import close_mongo_connection, connect_to_mongo
+from app.core.config import settings
+from app.core.database import close_mongo_connection, connect_to_mongo, mongo_ready
+from app.services.ml_service import MODEL_VERSION, model_ready
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,6 +35,7 @@ logger = logging.getLogger("vehicle_api")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await connect_to_mongo()
+    model_ready()
     logger.info("Application startup complete")
 
     yield
@@ -47,10 +51,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -62,9 +63,14 @@ async def log_requests(
     request: Request,
     call_next,
 ):
-    logger.info("Request %s %s", request.method, request.url.path)
+    path = request.url.path
+    qr_link = path.startswith("/api/diy/qr-session/")
+    log_path = "/api/diy/qr-session/[token]" if qr_link else path
+    logger.info("Request %s %s", request.method, log_path)
     response = await call_next(request)
-    logger.info("Response %s for %s", response.status_code, request.url.path)
+    if qr_link:
+        response.headers["Cache-Control"] = "no-store"
+    logger.info("Response %s for %s", response.status_code, log_path)
     return response
 
 
@@ -96,12 +102,19 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    from app.core.database import db_instance
-
-    database_status = "connected" if db_instance.db is not None else "disconnected"
-
+    database_connected = await mongo_ready()
+    model_loaded = model_ready()
     return {
         "status": "ok",
-        "service": "Vehicle Maintenance Predictor API",
-        "database": database_status,
+        "service": settings.PROJECT_NAME,
+        "database": "connected" if database_connected else "disconnected",
+        "prediction_model": {"version": MODEL_VERSION, "loaded": model_loaded},
+        "ready": database_connected and model_loaded,
     }
+
+
+@app.get("/ready")
+async def readiness_check():
+    health = await health_check()
+    health["status"] = "ok" if health["ready"] else "unavailable"
+    return JSONResponse(health, status_code=200 if health["ready"] else 503)

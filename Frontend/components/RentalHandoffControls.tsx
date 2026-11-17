@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useState } from "react";
 import { auth } from "@/lib/firebase";
 import { AlertTriangle, Camera, Loader2, PackageCheck, PackageOpen, RotateCcw } from "lucide-react";
@@ -84,7 +85,7 @@ export default function RentalHandoffControls({ rental, role, onUpdated }: Props
     try {
       const photo_url = await uploadPhoto();
       const key = role === "owner" ? "owner_id" : "renter_id";
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/${action}?${key}=${encodeURIComponent(user.uid)}`,
         {
           method: "PATCH",
@@ -114,7 +115,7 @@ export default function RentalHandoffControls({ rental, role, onUpdated }: Props
       const url = path === "handoff/report"
         ? `${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/${path}?role=${role}&user_id=${encodeURIComponent(user.uid)}`
         : `${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/${path}?${key}=${encodeURIComponent(user.uid)}`;
-      const response = await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" },
+      const response = await authenticatedFetch(url, { method: "PATCH", headers: { "Content-Type": "application/json" },
         ...(body ? { body: JSON.stringify(body) } : {}) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Unable to update rental.");

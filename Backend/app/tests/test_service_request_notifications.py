@@ -81,6 +81,7 @@ def update_status(request_id, status, **extra):
         routes.update_service_request_status(
             str(request_id),
             ServiceRequestStatusUpdate(mechanic_id="mechanic-1", status=status, **extra),
+            current_user={"uid": 'mechanic-1'},
         )
     )
 
@@ -96,7 +97,8 @@ def submit_request(db):
                 customer_name="Jason Martinez",
                 vehicle_id=db["vehicle_id"],
                 service_requested="Oil Change",
-            )
+            ),
+            current_user={"uid": 'customer-1'},
         )
     )
 

@@ -7,10 +7,11 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 from app.api.routes_diy import get_rental_requests_collection, serialize_mongo_document
 
 router = APIRouter(prefix="/api/diy", tags=["DIY Rental Extensions"])
@@ -69,7 +70,12 @@ async def _notify(user_id: str, title: str, message: str):
 
 
 @router.get("/rental-requests/{request_id}/extension-availability")
-async def extension_availability(request_id: str, renter_id: str):
+async def extension_availability(
+    request_id: str,
+    renter_id: str,
+    current_user: dict = Depends(require_firebase_user),
+):
+    renter_id = require_matching_uid(renter_id, current_user)
     rental = await _rental(request_id)
     if rental.get("renter_id") != renter_id.strip():
         raise HTTPException(403, "Only the borrower can check this rental.")
@@ -112,7 +118,12 @@ async def extension_availability(request_id: str, renter_id: str):
 
 
 @router.post("/rental-requests/{request_id}/extension")
-async def request_extension(request_id: str, payload: ExtensionRequest):
+async def request_extension(
+    request_id: str,
+    payload: ExtensionRequest,
+    current_user: dict = Depends(require_firebase_user),
+):
+    require_matching_uid(payload.renter_id, current_user)
     rental = await _rental(request_id)
     if rental.get("renter_id") != payload.renter_id.strip():
         raise HTTPException(403, "Only the borrower can request an extension.")
@@ -143,7 +154,12 @@ async def request_extension(request_id: str, payload: ExtensionRequest):
 
 
 @router.patch("/rental-requests/{request_id}/extension/decision")
-async def decide_extension(request_id: str, payload: ExtensionDecision):
+async def decide_extension(
+    request_id: str,
+    payload: ExtensionDecision,
+    current_user: dict = Depends(require_firebase_user),
+):
+    require_matching_uid(payload.owner_id, current_user)
     rental = await _rental(request_id)
     if rental.get("owner_id") != payload.owner_id.strip():
         raise HTTPException(403, "Only the tool owner may decide extensions.")

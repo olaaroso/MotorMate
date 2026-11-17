@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useMemo, useState } from "react";
 import { AlertTriangle, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, DollarSign, Loader2, X } from "lucide-react";
 import { auth } from "@/lib/firebase";
@@ -91,7 +92,7 @@ export default function RentalExtensionControls({ rental, onUpdated }: Props) {
     setError("");
     setNotice("");
     try {
-      const response = await fetch(`${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/extension-availability?renter_id=${encodeURIComponent(user.uid)}`, { cache: "no-store" });
+      const response = await authenticatedFetch(`${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/extension-availability?renter_id=${encodeURIComponent(user.uid)}`, { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Unable to check availability.");
       setAvailability(data as Availability);
@@ -117,7 +118,7 @@ export default function RentalExtensionControls({ rental, onUpdated }: Props) {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/extension`, {
+      const response = await authenticatedFetch(`${API}/api/diy/rental-requests/${encodeURIComponent(rental.id)}/extension`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ renter_id: user.uid, requested_end_date: newDate }),
       });

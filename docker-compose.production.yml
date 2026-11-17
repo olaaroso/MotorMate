@@ -1,0 +1,56 @@
+name: motormate
+
+services:
+  backend:
+    build: ./Backend
+    restart: unless-stopped
+    env_file: ./deploy/backend.env
+    environment:
+      FIREBASE_SERVICE_ACCOUNT_PATH: /run/secrets/firebase_service_account.json
+    user: "${MOTORMATE_UID:-1000}:${MOTORMATE_GID:-1000}"
+    volumes:
+      - type: bind
+        source: "${FIREBASE_SERVICE_ACCOUNT_FILE:?Set FIREBASE_SERVICE_ACCOUNT_FILE in deploy/compose.env}"
+        target: /run/secrets/firebase_service_account.json
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:8000:8000"
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=4).close()"]
+      start_period: 20s
+      interval: 15s
+      timeout: 5s
+      retries: 4
+
+  frontend:
+    build:
+      context: ./Frontend
+      args:
+        NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:?Set NEXT_PUBLIC_API_URL}"
+        NEXT_PUBLIC_APP_URL: "${NEXT_PUBLIC_APP_URL:?Set NEXT_PUBLIC_APP_URL}"
+        NEXT_PUBLIC_FIREBASE_API_KEY: "${NEXT_PUBLIC_FIREBASE_API_KEY:?Set NEXT_PUBLIC_FIREBASE_API_KEY}"
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: "${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:?Set NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN}"
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: "${NEXT_PUBLIC_FIREBASE_PROJECT_ID:?Set NEXT_PUBLIC_FIREBASE_PROJECT_ID}"
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: "${NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET:?Set NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET}"
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: "${NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID:?Set NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID}"
+        NEXT_PUBLIC_FIREBASE_APP_ID: "${NEXT_PUBLIC_FIREBASE_APP_ID:?Set NEXT_PUBLIC_FIREBASE_APP_ID}"
+        NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: "${NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME:?Set NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}"
+        NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET: "${NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET:?Set NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      start_period: 15s
+      interval: 15s
+      timeout: 5s
+      retries: 4

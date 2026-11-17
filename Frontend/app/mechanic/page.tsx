@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
@@ -88,7 +89,7 @@ const DAY_LABELS: Record<string, string> = {
 };
 
 async function fetchPendingRequests(mechanicId: string) {
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `${apiUrl}/api/service-requests/mechanic/${encodeURIComponent(
       mechanicId
     )}?status=pending`
@@ -284,7 +285,7 @@ export default function MechanicPage() {
       setRequestError("");
       setRequestNotice("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${apiUrl}/api/service-requests/${encodeURIComponent(requestId)}/status`,
         {
           method: "PATCH",

@@ -1,3 +1,4 @@
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 export type AppNotification = {
   id: string;
   title: string;
@@ -35,7 +36,7 @@ export function announceNotificationsUpdated() {
 }
 
 async function request<T>(path: string, init: RequestInit | undefined, failure: string): Promise<T> {
-  const response = await fetch(`${API_URL}/api/notifications${path}`, {
+  const response = await authenticatedFetch(`${API_URL}/api/notifications${path}`, {
     cache: "no-store",
     ...init,
   });

@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock
+from types import SimpleNamespace
 from bson import ObjectId
 from httpx import AsyncClient, ASGITransport
 from app.main import app
@@ -50,7 +51,7 @@ async def test_vehicle_prediction_is_saved_for_frontend(mocker):
     vehicle_id = "64f1a2b3c9e78a0012345678"
     object_id = ObjectId(vehicle_id)
     collection = mocker.Mock()
-    collection.update_one = AsyncMock()
+    collection.update_one = AsyncMock(return_value=SimpleNamespace(matched_count=1))
     vehicle = {
         "_id": object_id,
         "owner_id": "owner-1",
@@ -77,12 +78,16 @@ async def test_vehicle_prediction_is_saved_for_frontend(mocker):
         model_name="Accord",
         year=2015,
         driving_habits="Mixed",
+        climate_condition="Moderate",
+        primary_usage="Daily Commuting",
+        recent_major_service="Not Sure",
         vehicles_collection=collection,
     )
 
     assert result["vehicle_id"] == vehicle_id
     assert result["prediction"]["upcoming_repairs"] == repairs
     collection.update_one.assert_awaited_once()
+    assert collection.update_one.await_args.args[0] == {"_id": object_id, "owner_id": "owner-1"}
     update = collection.update_one.await_args.args[1]["$set"]
     assert update["maintenance_model_profile"]["vehicle_id"] == vehicle_id
     assert update["maintenance_prediction"]["mileage"] == 80000

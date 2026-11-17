@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, ClipboardList, Loader2, MapPin, Navigation } from "lucide-react";
 
@@ -57,7 +58,7 @@ export default function RentalHandoffInstructions({
     setError("");
 
     try {
-      const response = await fetch(
+      const response = await authenticatedFetch(
         `${API}/api/diy/handoff/rentals/${encodeURIComponent(rentalId)}`,
         { signal: controller.signal, cache: "no-store" },
       );

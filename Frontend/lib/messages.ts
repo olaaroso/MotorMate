@@ -1,3 +1,4 @@
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 export type MessagingView = "mechanic" | "customer";
 
 export type RequestMessage = {
@@ -45,7 +46,7 @@ function actorQuery(actorId: string, view: MessagingView) {
 }
 
 async function request<T>(url: string, init: RequestInit | undefined, failure: string): Promise<T> {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  const response = await authenticatedFetch(url, { cache: "no-store", ...init });
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {

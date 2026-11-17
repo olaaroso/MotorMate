@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
@@ -12,6 +12,7 @@ from app.api.routes_service_requests import (
     describe_appointment,
 )
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 from app.models.messages import MessagingView, ServiceRequestMessageCreate
 from app.services.notifications import create_notification
 
@@ -85,9 +86,7 @@ async def require_request_participant(
     (view="customer") or mechanic (view="mechanic"); otherwise 404 so the
     request's existence isn't revealed.
 
-    Security limitation: actor_id is client-asserted, as with the other
-    service-request routes. Verifying a Firebase ID token server-side and
-    taking the UID from it belongs here once it exists.
+    Callers pass the UID verified by Firebase authentication.
     """
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid service request ID.")
@@ -171,12 +170,12 @@ async def notify_recipient_of_message(
             destination=destination,
         )
 
-    shop = request_document.get("shop_name") or "MotorMate Mechanic"
-    await create_notification(
-        request_document.get("customer_id"),
-        f"New Message from {shop}",
-        f"{shop} sent you a message about your {service} request for {when}.",
-        destination=f"{CUSTOMER_APPOINTMENTS_PAGE}?request={request_id}",
+
+async def mark_thread_notifications_read(request_id: str, actor_id: str, view: MessagingView):
+    page = MECHANIC_REQUESTS_PAGE if view == "mechanic" else CUSTOMER_APPOINTMENTS_PAGE
+    await get_collection("notifications").update_many(
+        {"user_id": actor_id, "destination": f"{page}?request={request_id}", "is_read": False},
+        {"$set": {"is_read": True}},
     )
 
 
@@ -226,9 +225,10 @@ async def find_or_create_conversation(request_document: dict) -> dict:
 async def get_message_summary(
     actor_id: str = Query(..., min_length=1),
     view: MessagingView = Query(...),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """Unread counts for each of the actor's request conversations, keyed by request ID."""
-    actor_id = require_actor_id(actor_id)
+    actor_id = require_matching_uid(actor_id, current_user)
     await ensure_messaging_indexes()
 
     try:
@@ -257,11 +257,13 @@ async def get_request_messages(
     request_id: str,
     actor_id: str = Query(..., min_length=1),
     view: MessagingView = Query(...),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """
     The request's conversation, oldest message first. Readable for every
     status; can_send is false once the request is declined or completed.
     """
+    actor_id = require_matching_uid(actor_id, current_user)
     await ensure_messaging_indexes()
     request_document = await require_request_participant(request_id, actor_id, view)
     status = request_status(request_document)
@@ -293,11 +295,16 @@ async def get_request_messages(
 
 
 @router.post("/{request_id}/messages")
-async def send_request_message(request_id: str, payload: ServiceRequestMessageCreate):
+async def send_request_message(
+    request_id: str,
+    payload: ServiceRequestMessageCreate,
+    current_user: dict = Depends(require_firebase_user),
+):
     """
     Sends a plain-text message to the other participant. Only pending and
     accepted requests accept new messages.
     """
+    actor_id = require_matching_uid(payload.actor_id, current_user)
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
@@ -306,7 +313,7 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
     sender_role = payload.view
     recipient_role = OTHER_ROLE[sender_role]
     request_document = await require_request_participant(
-        request_id, payload.actor_id, sender_role
+        request_id, actor_id, sender_role
     )
 
     require_writable(request_status(request_document))
@@ -320,7 +327,7 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
             "conversation_id": conversation["_id"],
             "service_request_id": request_id,
             "sender_role": sender_role,
-            "sender_id": require_actor_id(payload.actor_id),
+            "sender_id": actor_id,
             "body": body,
             "kind": "text",
             "created_at": sent_at,
@@ -365,7 +372,11 @@ async def send_request_message(request_id: str, payload: ServiceRequestMessageCr
         raise HTTPException(status_code=500, detail="Failed to send message.")
 
     new_unread_count = unread_count_for(before_update, recipient_role) + 1
-    await notify_recipient_of_message(latest, recipient_role, new_unread_count)
+    try:
+        await mark_thread_notifications_read(request_id, actor_id, sender_role)
+        await notify_recipient_of_message(latest, recipient_role, new_unread_count)
+    except Exception:
+        logger.exception("Failed to update notifications for service request %s.", request_id)
 
     return {
         "message": "Message sent.",
@@ -378,8 +389,10 @@ async def mark_request_messages_read(
         request_id: str,
         actor_id: str = Query(..., min_length=1),
         view: MessagingView = Query(...),
+        current_user: dict = Depends(require_firebase_user),
 ):
     """Clears the actor's unread count for this request's conversation."""
+    actor_id = require_matching_uid(actor_id, current_user)
     await ensure_messaging_indexes()
     await require_request_participant(request_id, actor_id, view)
 
@@ -393,15 +406,7 @@ async def mark_request_messages_read(
                 }
             },
         )
-        destination = (
-            f"{MECHANIC_REQUESTS_PAGE}?request={request_id}"
-            if view == "mechanic"
-            else f"{CUSTOMER_APPOINTMENTS_PAGE}?request={request_id}"
-        )
-        await get_collection("notifications").update_many(
-            {"user_id": require_actor_id(actor_id), "destination": destination, "is_read": False},
-            {"$set": {"is_read": True}},
-        )
+        await mark_thread_notifications_read(request_id, actor_id, view)
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to mark messages as read.")
 

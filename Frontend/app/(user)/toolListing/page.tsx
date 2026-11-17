@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
@@ -101,7 +102,7 @@ export default function ToolListingPage() {
     if (!pickupAddress.trim()) { setErrorMsg("Add the pickup address before publishing."); return; }
     setLoading(true); setErrorMsg(""); setWarning("");
     try {
-      const response = await fetch(`${API}/api/diy/listings`, {
+      const response = await authenticatedFetch(`${API}/api/diy/listings`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           owner_id: user.uid, seller_name: sellerName, item_name: toolName.trim(), category, condition,
@@ -117,7 +118,7 @@ export default function ToolListingPage() {
       // Mark published before the private-details request: a failed second request must not create duplicate listings.
       setSubmitted(true);
       try {
-        const privateResponse = await fetch(`${API}/api/diy/handoff/listings/${listingId}?owner_id=${encodeURIComponent(user.uid)}`, {
+        const privateResponse = await authenticatedFetch(`${API}/api/diy/handoff/listings/${listingId}?owner_id=${encodeURIComponent(user.uid)}`, {
           method: "PUT", headers: { "Content-Type": "application/json", },
           body: JSON.stringify({
             pickup_address: pickupAddress.trim(), pickup_instructions: pickupInstructions.trim(),

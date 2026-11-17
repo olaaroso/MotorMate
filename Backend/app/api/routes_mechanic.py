@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.auth import require_role
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 from app.models.user import MechanicProfile
 from app.services.location_service import LocationProviderError, location_service
 from app.services.scheduling import (
@@ -76,9 +77,12 @@ def service_filter(service: str) -> dict:
 
 
 @router.post("/register")
-async def register_mechanic(mechanic: MechanicProfile):
+async def register_mechanic(
+    mechanic: MechanicProfile,
+    current_user: dict = Depends(require_firebase_user),
+):
     """Create or update a mechanic shop profile keyed by Firebase owner UID."""
-    owner_id = mechanic.owner_id.strip()
+    owner_id = require_matching_uid(mechanic.owner_id, current_user)
     shop_name = mechanic.shop_name.strip()
 
     if not owner_id:

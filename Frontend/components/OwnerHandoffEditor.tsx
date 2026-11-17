@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState } from "react";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "@/lib/firebase";
@@ -24,7 +25,7 @@ export default function OwnerHandoffEditor({ listingId }: { listingId: string })
       if (!user) { if (alive) setLoading(false); return; }
       try {
         const [res, snapshot] = await Promise.all([
-          fetch(`${API}/api/diy/handoff/listings/${encodeURIComponent(listingId)}?owner_id=${encodeURIComponent(user.uid)}`, {
+          authenticatedFetch(`${API}/api/diy/handoff/listings/${encodeURIComponent(listingId)}?owner_id=${encodeURIComponent(user.uid)}`, {
             headers: {  }, cache: "no-store",
           }),
           getDoc(doc(db, "users", user.uid)),
@@ -54,7 +55,7 @@ export default function OwnerHandoffEditor({ listingId }: { listingId: string })
     if (!address.trim()) { setError("A pickup address is required before this tool can be approved for rental."); return; }
     setWorking(true); setError(""); setSuccess("");
     try {
-      const response = await fetch(`${API}/api/diy/handoff/listings/${encodeURIComponent(listingId)}?owner_id=${encodeURIComponent(user.uid)}`, {
+      const response = await authenticatedFetch(`${API}/api/diy/handoff/listings/${encodeURIComponent(listingId)}?owner_id=${encodeURIComponent(user.uid)}`, {
         method: "PUT", headers: { "Content-Type": "application/json", },
         body: JSON.stringify({ pickup_address: address.trim(), pickup_instructions: pickup.trim(), dropoff_instructions: dropoff.trim() }),
       });

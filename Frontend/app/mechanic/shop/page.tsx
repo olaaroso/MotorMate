@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   CheckCircle2,
@@ -368,7 +369,7 @@ export default function MechanicShopPage() {
         operating_hours: Object.keys(trimmedHours).length ? trimmedHours : null,
       };
 
-      const response = await fetch(`${apiUrl}/api/mechanics/register`, {
+      const response = await authenticatedFetch(`${apiUrl}/api/mechanics/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

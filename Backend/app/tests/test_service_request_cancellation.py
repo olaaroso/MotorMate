@@ -90,6 +90,7 @@ def cancel(request_id, actor_id=CUSTOMER, view="customer", reason=None):
         routes.cancel_service_request(
             request_id,
             ServiceRequestCancel(actor_id=actor_id, view=view, reason=reason),
+            current_user={"uid": actor_id.strip() or CUSTOMER},
         )
     )
 
@@ -199,7 +200,7 @@ def test_client_cannot_supply_cancelled_by(db):
     request_id = stored_request(db, status="accepted")
     payload = ServiceRequestCancel(actor_id=CUSTOMER, view="customer", cancelled_by="mechanic")
 
-    asyncio.run(routes.cancel_service_request(request_id, payload))
+    asyncio.run(routes.cancel_service_request(request_id, payload, current_user={"uid": payload.actor_id}))
 
     assert stored(db, request_id)["cancelled_by"] == "customer"
 
@@ -251,6 +252,7 @@ def test_cancelled_request_cannot_be_accepted_or_completed_afterwards(db):
                 routes.update_service_request_status(
                     request_id,
                     ServiceRequestStatusUpdate(mechanic_id=MECHANIC, status=status),
+                    current_user={"uid": MECHANIC},
                 )
             )
         assert error.value.status_code == 409
@@ -285,14 +287,16 @@ def test_cancelled_interval_can_be_requested_and_accepted_again(db):
                 customer_name="Customer One",
                 vehicle_id=db["vehicle_id"],
                 service_requested="Brake Pad Replacement",
-            )
+            ),
+            current_user={"uid": CUSTOMER},
         )
     )
     new_id = result["request"]["id"]
 
     accepted = asyncio.run(
         routes.update_service_request_status(
-            new_id, ServiceRequestStatusUpdate(mechanic_id=MECHANIC, status="accepted")
+            new_id, ServiceRequestStatusUpdate(mechanic_id=MECHANIC, status="accepted"),
+            current_user={"uid": MECHANIC},
         )
     )
 
@@ -307,7 +311,8 @@ def test_cancelled_request_does_not_block_accepting_an_overlapping_one(db):
 
     asyncio.run(
         routes.update_service_request_status(
-            overlapping_id, ServiceRequestStatusUpdate(mechanic_id=MECHANIC, status="accepted")
+            overlapping_id, ServiceRequestStatusUpdate(mechanic_id=MECHANIC, status="accepted"),
+            current_user={"uid": MECHANIC},
         )
     )
 
@@ -319,8 +324,8 @@ def test_cancelled_requests_still_appear_in_both_lists(db):
     request_id = stored_request(db, status="accepted")
     cancel(request_id)
 
-    mechanic_list = asyncio.run(routes.get_mechanic_service_requests(MECHANIC, None))["results"]
-    customer_list = asyncio.run(routes.get_customer_service_requests(CUSTOMER, "cancelled"))["results"]
+    mechanic_list = asyncio.run(routes.get_mechanic_service_requests(MECHANIC, None, current_user={"uid": MECHANIC}))["results"]
+    customer_list = asyncio.run(routes.get_customer_service_requests(CUSTOMER, "cancelled", current_user={"uid": CUSTOMER}))["results"]
 
     assert [item["status"] for item in mechanic_list] == ["cancelled"]
     assert [item["id"] for item in customer_list] == [request_id]
@@ -336,13 +341,14 @@ def test_cancelled_thread_is_readable_but_read_only(db):
         message_routes.send_request_message(
             request_id,
             ServiceRequestMessageCreate(actor_id=CUSTOMER, view="customer", body="See you then"),
+            current_user={"uid": CUSTOMER},
         )
     )
 
     cancel(request_id, MECHANIC, "mechanic")
 
     for actor_id, view in ((CUSTOMER, "customer"), (MECHANIC, "mechanic")):
-        thread = asyncio.run(message_routes.get_request_messages(request_id, actor_id, view))
+        thread = asyncio.run(message_routes.get_request_messages(request_id, actor_id, view, current_user={"uid": actor_id}))
         assert thread["status"] == "cancelled"
         assert thread["can_send"] is False
         assert [m["body"] for m in thread["messages"]] == ["See you then"]
@@ -352,6 +358,7 @@ def test_cancelled_thread_is_readable_but_read_only(db):
                 message_routes.send_request_message(
                     request_id,
                     ServiceRequestMessageCreate(actor_id=actor_id, view=view, body="hello?"),
+                    current_user={"uid": actor_id},
                 )
             )
         assert error.value.status_code == 409
@@ -409,6 +416,7 @@ def test_cancellation_notification_never_includes_message_content(db):
         message_routes.send_request_message(
             request_id,
             ServiceRequestMessageCreate(actor_id=MECHANIC, view="mechanic", body="Gate code 4321"),
+            current_user={"uid": MECHANIC},
         )
     )
 

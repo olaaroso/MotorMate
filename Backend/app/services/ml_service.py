@@ -1,55 +1,21 @@
-import os
-import sys
+import logging
+from zipfile import BadZipFile
 
-import mlflow
-import torch
-from mlflow.tracking import MlflowClient
+import numpy as np
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-app_dir = os.path.dirname(current_dir)
-backend_root = os.path.dirname(app_dir)
-ml_pipeline_dir = os.path.join(app_dir, "ml_pipeline")
+from app.ml_pipeline.cpu_model import MODEL_VERSION, cpu_logits, load_production_weights
 
-if ml_pipeline_dir not in sys.path:
-    sys.path.append(ml_pipeline_dir)
+logger = logging.getLogger("vehicle_api")
 
-predictor_model = None
-MODEL_VERSION = "maintenance-mlp-v2"
 
-def load_latest_model():
-    """Load the most recent MLflow model and cache it in memory."""
-    global predictor_model
-    if predictor_model is not None:
-        return predictor_model
-
-    db_path = os.path.join(backend_root, "mlflow.db")
-    mlflow.set_tracking_uri(f"sqlite:///{db_path}")
-
+def model_ready() -> bool:
     try:
-        experiment = mlflow.get_experiment_by_name("Vehicle_Maintenance_Prediction")
-        if not experiment:
-            print("Warning: MLflow experiment not found. Model not loaded.")
-            return None
+        load_production_weights()
+        return True
+    except (OSError, ValueError, TypeError, AttributeError, BadZipFile, EOFError):
+        logger.error("Could not load the versioned maintenance model.")
+        return False
 
-        client = MlflowClient()
-        runs = client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            order_by=["start_time DESC"],
-            max_results=1,
-        )
-
-        if not runs:
-            print("Warning: No MLflow runs found.")
-            return None
-
-        latest_run_id = runs[0].info.run_id
-        model_uri = f"runs:/{latest_run_id}/maintenance_model"
-        predictor_model = mlflow.pytorch.load_model(model_uri)
-        predictor_model.eval()
-        return predictor_model
-    except Exception as exc:
-        print(f"Failed to load MLflow model: {exc}")
-        return None
 
 async def predict_maintenance(
         make: str,
@@ -62,10 +28,10 @@ async def predict_maintenance(
         recent_major_service: str = "Not Sure",
 ) -> dict:
     """Run a single forward pass for the vehicle prediction model."""
-    model = load_latest_model()
-
-    if model is None:
+    if not model_ready():
         return {"status": "error", "message": "Prediction model is currently unavailable."}
+
+    weights = load_production_weights()
 
     safe_year = year if year else 2010
     normalized_year = (safe_year - 2000) / 30.0
@@ -99,27 +65,13 @@ async def predict_maintenance(
         "Over 2 Years Ago": 0.6,
     }.get(recent_major_service, 0.2)
 
-    features = [
-        normalized_year,
-        normalized_mileage,
-        usage_severity,
-        climate_score,
-        primary_usage_score,
-        service_recency_score
-    ]
-
-    input_dimension = next(
-        (layer.in_features for layer in model.modules() if isinstance(layer, torch.nn.Linear)),
-        len(features),
-    )
-    input_tensor = torch.tensor([features[:input_dimension]], dtype=torch.float32)
-
     try:
-        with torch.no_grad():
-            logits = model(input_tensor)
-            probabilities = torch.sigmoid(logits).flatten().tolist()
-    except Exception as exc:
-        return {"status": "error", "message": f"Inference failed: {str(exc)}"}
+        features = np.asarray([normalized_year, normalized_mileage], dtype=np.float32)
+        logits = cpu_logits(weights, features)
+        probabilities = np.exp(-np.logaddexp(np.float32(0), -logits)).tolist()
+    except (ValueError, FloatingPointError, OverflowError):
+        logger.exception("Maintenance inference failed.")
+        return {"status": "error", "message": "Inference failed."}
 
     parts_map = [
         {"part": "Brake Pads", "cost": 250},
@@ -166,9 +118,9 @@ async def predict_maintenance(
 
     return {
         "status": "success",
-        "model_version": MODEL_VERSION if input_dimension >= 3 else "maintenance-mlp-v1",
+        "model_version": MODEL_VERSION,
         "predictions": predicted_failures,
     }
 
 def get_model_cache_size() -> int:
-    return 1 if predictor_model is not None else 0
+    return load_production_weights.cache_info().currsize

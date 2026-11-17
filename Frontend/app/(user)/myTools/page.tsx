@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { onAuthStateChanged } from "firebase/auth";
@@ -132,7 +133,7 @@ async function syncOwnerHandoffDefaults(ownerId: string, apiUrl: string) {
   const profile = snapshot.data();
   const address = [profile.streetAddress, profile.city, profile.state, profile.zipCode]
       .map((value: unknown) => String(value || "").trim()).filter(Boolean).join(", ");
-  const result = await fetch(`${apiUrl}/api/diy/handoff/defaults/${encodeURIComponent(ownerId)}`, {
+  const result = await authenticatedFetch(`${apiUrl}/api/diy/handoff/defaults/${encodeURIComponent(ownerId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -193,10 +194,10 @@ export default function MyToolsPage() {
             setErrorMsg("");
 
             const [toolsResponse, requestsResponse] = await Promise.all([
-              fetch(
+              authenticatedFetch(
                   `${apiUrl}/api/diy/listings/owner/${user.uid}`
               ),
-              fetch(
+              authenticatedFetch(
                   `${apiUrl}/api/diy/rental-requests/owner/${user.uid}`
               ),
             ]);
@@ -249,7 +250,7 @@ export default function MyToolsPage() {
   const refreshHandoffData = async () => {
     const user = auth.currentUser;
     if (!user) return;
-    const response = await fetch(
+    const response = await authenticatedFetch(
         `${apiUrl}/api/diy/rental-requests/owner/${encodeURIComponent(user.uid)}`,
         { cache: "no-store" }
     );
@@ -334,7 +335,7 @@ export default function MyToolsPage() {
       await syncOwnerHandoffDefaults(user.uid, apiUrl).catch((err) =>
           console.warn("ToolDrop defaults not yet available:", err)
       );
-      const response = await fetch(
+      const response = await authenticatedFetch(
           `${apiUrl}/api/diy/rental-requests/${request.id}/approve?owner_id=${encodeURIComponent(user.uid)}`,
           {
             method: "PATCH",
@@ -354,10 +355,10 @@ export default function MyToolsPage() {
 
       const [requestsResponse, toolsResponse] =
           await Promise.all([
-            fetch(
+            authenticatedFetch(
                 `${apiUrl}/api/diy/rental-requests/owner/${user.uid}`
             ),
-            fetch(
+            authenticatedFetch(
                 `${apiUrl}/api/diy/listings/owner/${user.uid}`
             ),
           ]);
@@ -423,7 +424,7 @@ export default function MyToolsPage() {
       setRequestActionId(request.id);
       setErrorMsg("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
           `${apiUrl}/api/diy/rental-requests/${request.id}/reject?owner_id=${encodeURIComponent(
               user.uid
           )}`,
@@ -500,7 +501,7 @@ export default function MyToolsPage() {
       setRequestActionId(request.id);
       setErrorMsg("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
           `${apiUrl}/api/diy/rental-requests/${request.id}/cancel?owner_id=${encodeURIComponent(
               user.uid
           )}`,
@@ -522,10 +523,10 @@ export default function MyToolsPage() {
 
       const [requestsResponse, toolsResponse] =
           await Promise.all([
-            fetch(
+            authenticatedFetch(
                 `${apiUrl}/api/diy/rental-requests/owner/${user.uid}`
             ),
-            fetch(
+            authenticatedFetch(
                 `${apiUrl}/api/diy/listings/owner/${user.uid}`
             ),
           ]);
@@ -709,7 +710,7 @@ export default function MyToolsPage() {
       setSaving(true);
       setErrorMsg("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
           `${apiUrl}/api/diy/listings/${editingTool.id}?owner_id=${encodeURIComponent(
               user.uid
           )}`,
@@ -792,7 +793,7 @@ export default function MyToolsPage() {
       setDeleting(true);
       setErrorMsg("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
           `${apiUrl}/api/diy/listings/${deletingTool.id}?owner_id=${encodeURIComponent(
               user.uid
           )}`,
@@ -859,7 +860,7 @@ export default function MyToolsPage() {
     try {
       setErrorMsg("");
 
-      const response = await fetch(
+      const response = await authenticatedFetch(
           `${apiUrl}/api/diy/listings/${tool.id}?owner_id=${encodeURIComponent(
               user.uid
           )}`,

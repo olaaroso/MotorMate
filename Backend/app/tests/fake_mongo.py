@@ -8,12 +8,15 @@ from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 
-def get_path(document: dict, key: str):
+def get_path(document: dict, key: str, default=None):
     value = document
     for part in key.split("."):
+        if isinstance(value, list) and part.isdecimal() and int(part) < len(value):
+            value = value[int(part)]
+            continue
         if not isinstance(value, dict):
-            return None
-        value = value.get(part)
+            return default
+        value = value.get(part, default)
     return value
 
 
@@ -36,12 +39,25 @@ def unset_path(document: dict, key: str):
 
 
 def matches(document: dict, query: dict) -> bool:
+    missing = object()
     for key, expected in query.items():
+        if key == "$or":
+            if not any(matches(document, alternative) for alternative in expected):
+                return False
+            continue
         actual = get_path(document, key)
         if isinstance(expected, dict) and any(op.startswith("$") for op in expected):
             if "$in" in expected and actual not in expected["$in"]:
                 return False
             if "$ne" in expected and actual == expected["$ne"]:
+                return False
+            if "$exists" in expected and (get_path(document, key, missing) is not missing) != expected["$exists"]:
+                return False
+            if "$gt" in expected and (actual is None or actual <= expected["$gt"]):
+                return False
+            if "$lte" in expected and (actual is None or actual > expected["$lte"]):
+                return False
+            if "$gte" in expected and (actual is None or actual < expected["$gte"]):
                 return False
         elif expected is None:
             if actual is not None:
@@ -51,7 +67,38 @@ def matches(document: dict, query: dict) -> bool:
     return True
 
 
-def apply_update(document: dict, update: dict, inserting: bool = False):
+def evaluate(expression, document):
+    if isinstance(expression, str) and expression.startswith("$"):
+        return get_path(document, expression[1:])
+    if not isinstance(expression, dict):
+        return expression
+    if "$literal" in expression:
+        return expression["$literal"]
+    if "$type" in expression:
+        return "object" if isinstance(evaluate(expression["$type"], document), dict) else None
+    if "$ifNull" in expression:
+        value, fallback = expression["$ifNull"]
+        result = evaluate(value, document)
+        return evaluate(fallback, document) if result is None else result
+    if "$eq" in expression:
+        left, right = expression["$eq"]
+        return evaluate(left, document) == evaluate(right, document)
+    if "$cond" in expression:
+        test, yes, no = expression["$cond"]
+        return evaluate(yes if evaluate(test, document) else no, document)
+    if "$mergeObjects" in expression:
+        return {key: value for part in expression["$mergeObjects"]
+                for key, value in evaluate(part, document).items()}
+    return {key: evaluate(value, document) for key, value in expression.items()}
+
+
+def apply_update(document: dict, update: dict | list, inserting: bool = False):
+    if isinstance(update, list):
+        for stage in update:
+            fields = {key: evaluate(value, document) for key, value in stage["$set"].items()}
+            for key, value in fields.items():
+                set_path(document, key, value)
+        return
     if inserting:
         for key, value in update.get("$setOnInsert", {}).items():
             set_path(document, key, value)
@@ -87,6 +134,9 @@ class FakeCursor:
             self.documents = self.documents[:count]
         return self
 
+    async def to_list(self, length=None):
+        return self.documents if length is None else self.documents[:length]
+
     def __aiter__(self):
         self._iterator = iter(self.documents)
         return self
@@ -117,11 +167,14 @@ class FakeCollection:
     def find(self, query, projection=None):
         return FakeCursor([dict(doc) for doc in self.documents if matches(doc, query)])
 
-    async def find_one(self, query):
+    async def find_one(self, query, projection=None):
         for doc in self.documents:
             if matches(doc, query):
-                return dict(doc)
+                return deepcopy(doc)
         return None
+
+    async def count_documents(self, query):
+        return sum(matches(doc, query) for doc in self.documents)
 
     async def find_one_and_update(self, query, update, return_document=None, upsert=False):
         for doc in self.documents:
@@ -150,6 +203,14 @@ class FakeCollection:
             apply_update(document, update)
             await self.insert_one(document)
         return SimpleNamespace(matched_count=0, modified_count=0)
+
+    async def update_many(self, query, update):
+        count = 0
+        for doc in self.documents:
+            if matches(doc, query):
+                apply_update(doc, update)
+                count += 1
+        return SimpleNamespace(matched_count=count, modified_count=count)
 
     async def delete_one(self, query):
         for index, doc in enumerate(self.documents):

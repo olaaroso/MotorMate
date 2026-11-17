@@ -19,20 +19,25 @@ function getApiBase() {
     return "http://127.0.0.1:8000";
 }
 
-function compressImageToDataUrl(file: File, maxWidth = 1200): Promise<string> {
+function compressImageToDataUrl(file: File, maxSide = 1200): Promise<string> {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => {
             const img = new Image();
             img.onload = () => {
-                const scale = Math.min(1, maxWidth / img.width);
+                const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
                 const canvas = document.createElement("canvas");
-                canvas.width = Math.round(img.width * scale);
-                canvas.height = Math.round(img.height * scale);
+                canvas.width = Math.max(1, Math.round(img.width * scale));
+                canvas.height = Math.max(1, Math.round(img.height * scale));
                 const ctx = canvas.getContext("2d");
                 if (!ctx) return reject(new Error("Canvas unavailable"));
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                resolve(canvas.toDataURL("image/jpeg", 0.82));
+                const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+                if (dataUrl.length > "data:image/jpeg;base64,".length + 4 * (768 * 1024 / 3)) {
+                    reject(new Error("Choose a smaller condition photo."));
+                    return;
+                }
+                resolve(dataUrl);
             };
             img.onerror = () => reject(new Error("Invalid image file"));
             img.src = reader.result as string;
@@ -60,7 +65,10 @@ export default function MobileHandoffUploadPage() {
 
     useEffect(() => {
         if (!token) return;
-        fetch(`${getApiBase()}/api/diy/qr-session/${token}`)
+        fetch(`${getApiBase()}/api/diy/qr-session/${token}`, {
+            cache: "no-store",
+            referrerPolicy: "no-referrer",
+        })
             .then(async (res) => {
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok) throw new Error(data.detail || "Invalid or expired QR link.");
@@ -78,8 +86,9 @@ export default function MobileHandoffUploadPage() {
         try {
             const compressed = await compressImageToDataUrl(file);
             setPreviewUrl(compressed);
-        } catch {
-            setError("Could not process that photo. Please try another.");
+        } catch (err) {
+            setPreviewUrl("");
+            setError(err instanceof Error ? err.message : "Could not process that photo.");
         }
     };
 
@@ -93,6 +102,8 @@ export default function MobileHandoffUploadPage() {
         try {
             const res = await fetch(`${getApiBase()}/api/diy/qr-session/${token}/complete`, {
                 method: "POST",
+                cache: "no-store",
+                referrerPolicy: "no-referrer",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     photo_url: previewUrl,

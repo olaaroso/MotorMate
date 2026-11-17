@@ -88,8 +88,10 @@ export default function AccountSettingsPage() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("upload_preset", "motormate_tools");
-      const response = await fetch("https://api.cloudinary.com/v1_1/omki7dtk/image/upload", { method: "POST", body: formData });
+      const cloud = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "omki7dtk";
+      const preset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET || "motormate_tools";
+      formData.append("upload_preset", preset);
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${encodeURIComponent(cloud)}/image/upload`, { method: "POST", body: formData });
       const result = await response.json();
       if (!response.ok || !result.secure_url) throw new Error("Photo upload failed");
       setProfileImage(result.secure_url);

@@ -1,5 +1,6 @@
 "use client";
 
+import { authenticatedFetch } from "@/lib/authenticatedFetch";
 import {
     useEffect,
     useState,
@@ -158,7 +159,7 @@ export default function VehicleCard({
             setPredictionLoading(true);
 
             try {
-                const response = await fetch(`${apiUrl}/api/predict/vehicle/${vehicleId}?owner_id=${encodeURIComponent(currentUserId)}`, {
+                const response = await authenticatedFetch(`${apiUrl}/api/predict/vehicle/${vehicleId}?owner_id=${encodeURIComponent(currentUserId)}`, {
                     method: "GET",
                     headers: { "Content-Type": "application/json" }
                 });
@@ -207,7 +208,7 @@ export default function VehicleCard({
         setDiagnosticsError("");
 
         try {
-            const response = await fetch(`${apiUrl}/api/predict/vehicle/${vehicleId}`, {
+            const response = await authenticatedFetch(`${apiUrl}/api/predict/vehicle/${vehicleId}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
@@ -283,7 +284,7 @@ export default function VehicleCard({
         }
 
         try {
-            const response = await fetch(
+            const response = await authenticatedFetch(
                 `${apiUrl}/api/vin/vehicles/${vehicleId}`,
                 {
                     method: "PATCH",
@@ -342,7 +343,7 @@ export default function VehicleCard({
         setDeleteError("");
 
         try {
-            const response = await fetch(
+            const response = await authenticatedFetch(
                 `${apiUrl}/api/vin/vehicles/${vehicleId}?owner_id=${encodeURIComponent(
                     currentUserId
                 )}`,

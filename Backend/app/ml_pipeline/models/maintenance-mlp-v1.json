@@ -1,0 +1,17 @@
+{
+  "model_version": "maintenance-mlp-v1",
+  "source_model_id": "m-b8ed1a0533814672a5fd2db37125928d",
+  "source_sha256": "2a74c50d115d2248156d5ab0dce2d4cc4b70c4a7e623482d763c2f2605fd50f5",
+  "architecture": [
+    2,
+    64,
+    32,
+    3
+  ],
+  "input_order": [
+    "normalized_year",
+    "normalized_mileage"
+  ],
+  "batch_norm_epsilon": 1e-05,
+  "weights_sha256": "4fe61a4326c310d08bec2eda34ceaa0199c29d875a47a975f8d36be237301a53"
+}

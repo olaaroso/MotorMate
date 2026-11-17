@@ -2,11 +2,12 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.core.database import db_instance
+from app.core.firebase_auth import require_firebase_user, require_matching_uid
 from app.models.appointment import (
     ServiceRequestCancel,
     ServiceRequestCreate,
@@ -396,14 +397,17 @@ async def sync_completed_service_history(request_document: dict):
 
 
 @router.post("")
-async def create_service_request(payload: ServiceRequestCreate):
+async def create_service_request(
+    payload: ServiceRequestCreate,
+    current_user: dict = Depends(require_firebase_user),
+):
     """
     Creates a pending request for a valid 30-minute appointment window.
     Pending requests do not reserve the time; accepted/completed requests do.
     """
     await ensure_service_request_indexes()
 
-    customer_id = payload.customer_id.strip()
+    customer_id = require_matching_uid(payload.customer_id, current_user)
     customer_name = payload.customer_name.strip()
     mechanic_id = payload.mechanic_id.strip()
     service_requested = payload.service_requested.strip()
@@ -615,9 +619,10 @@ async def create_service_request(payload: ServiceRequestCreate):
 async def get_mechanic_service_requests(
     mechanic_id: str,
     status: Optional[ServiceRequestStatus] = Query(default=None),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """Lists requests sent to a mechanic, optionally filtered by status."""
-    mechanic_id = mechanic_id.strip()
+    mechanic_id = require_matching_uid(mechanic_id, current_user)
     if not mechanic_id:
         raise HTTPException(status_code=400, detail="mechanic_id is required.")
 
@@ -649,9 +654,10 @@ async def get_mechanic_service_requests(
 async def get_customer_service_requests(
     customer_id: str,
     status: Optional[ServiceRequestStatus] = Query(default=None),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """Lists a car owner's service requests, optionally filtered by status."""
-    customer_id = customer_id.strip()
+    customer_id = require_matching_uid(customer_id, current_user)
     if not customer_id:
         raise HTTPException(status_code=400, detail="customer_id is required.")
 
@@ -677,20 +683,17 @@ async def get_customer_service_requests(
 async def get_shared_service_history(
     request_id: str,
     mechanic_id: str = Query(..., min_length=1),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """
     Lets the request's mechanic read the vehicle's Garage service history when
     the customer opted in. The vehicle and owner always come from the stored
     request, never from the caller.
-
-    Security limitation: mechanic_id is client-asserted. Verifying a Firebase
-    ID token server-side and taking the mechanic's UID from it is a planned
-    future improvement; until then this only narrows what can be requested.
     """
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid service request ID.")
 
-    mechanic_id = mechanic_id.strip()
+    mechanic_id = require_matching_uid(mechanic_id, current_user)
     if not mechanic_id:
         raise HTTPException(status_code=400, detail="mechanic_id is required.")
 
@@ -752,6 +755,7 @@ async def get_shared_service_history(
 async def update_service_request_status(
     request_id: str,
     payload: ServiceRequestStatusUpdate,
+    current_user: dict = Depends(require_firebase_user),
 ):
     """
     Advances a service request through its mechanic-controlled lifecycle:
@@ -766,7 +770,7 @@ async def update_service_request_status(
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid service request ID.")
 
-    mechanic_id = payload.mechanic_id.strip()
+    mechanic_id = require_matching_uid(payload.mechanic_id, current_user)
     if not mechanic_id:
         raise HTTPException(status_code=400, detail="mechanic_id is required.")
 
@@ -1059,7 +1063,11 @@ async def update_service_request_status(
 
 
 @router.patch("/{request_id}/cancel")
-async def cancel_service_request(request_id: str, payload: ServiceRequestCancel):
+async def cancel_service_request(
+    request_id: str,
+    payload: ServiceRequestCancel,
+    current_user: dict = Depends(require_firebase_user),
+):
     """
     Lets a participant call off a request without deleting it:
 
@@ -1068,14 +1076,11 @@ async def cancel_service_request(request_id: str, payload: ServiceRequestCancel)
 
     Cancelled requests are not in RESERVED_STATUSES, so an accepted
     appointment's time becomes bookable again.
-
-    Security limitation: actor_id is client-asserted, as with the other
-    service-request routes.
     """
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid service request ID.")
 
-    actor_id = payload.actor_id.strip()
+    actor_id = require_matching_uid(payload.actor_id, current_user)
     if not actor_id:
         raise HTTPException(status_code=400, detail="actor_id is required.")
 
@@ -1133,12 +1138,13 @@ async def remove_completed_service_request(
     request_id: str,
     actor_id: str = Query(..., min_length=1),
     view: Literal["mechanic", "customer"] = Query(...),
+    current_user: dict = Depends(require_firebase_user),
 ):
     """Hide a completed request from one side's appointment list without deleting Garage history."""
     if not ObjectId.is_valid(request_id):
         raise HTTPException(status_code=400, detail="Invalid service request ID.")
 
-    actor_id = actor_id.strip()
+    actor_id = require_matching_uid(actor_id, current_user)
     if not actor_id:
         raise HTTPException(status_code=400, detail="actor_id is required.")
 
