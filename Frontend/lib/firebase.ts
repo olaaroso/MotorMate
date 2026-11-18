@@ -1,5 +1,10 @@
 import { getApp, getApps, initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import {
+  browserPopupRedirectResolver,
+  browserSessionPersistence,
+  getAuth,
+  initializeAuth,
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
@@ -17,5 +22,11 @@ const app =
     ? initializeApp(firebaseConfig)
     : getApp();
 
-export const auth = getAuth(app);
+export const auth =
+  typeof window === "undefined"
+    ? getAuth(app)
+    : initializeAuth(app, {
+        persistence: browserSessionPersistence,
+        popupRedirectResolver: browserPopupRedirectResolver,
+      });
 export const db = getFirestore(app);
